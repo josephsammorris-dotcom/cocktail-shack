@@ -1,0 +1,19 @@
+// Cloudflare Workers config.
+//  - public/ is served as static files (the TV page, the phone page, three.js)
+//  - src/worker.js handles /api/new, /ws/<CODE> and /play/<CODE>; each room is one Durable Object
+//    running the authoritative game server (src/engine.js holds the rules)
+{
+  "name": "cocktail-shack",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "observability": { "enabled": true }
+}

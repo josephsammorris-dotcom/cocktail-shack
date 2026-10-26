@@ -1,0 +1,23 @@
+{
+  "name": "cocktail-shack",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node tests/engine.test.js && node tests/sim.js 1000",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "node build.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^4.153.0"
+  },
+  "dependencies": {
+    "qrcode-generator": "^1.4.4",
+    "three": "^0.160.0"
+  },
+  "type": "module"
+}

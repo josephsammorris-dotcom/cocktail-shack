@@ -1,0 +1,2 @@
+{ "name": "Cocktail Shack", "short_name": "Cocktail Shack", "start_url": "/play", "display": "standalone",
+  "background_color": "#fff7ea", "theme_color": "#ff6b5e", "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }

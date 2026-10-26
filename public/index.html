@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cocktail Shack</title>
+<meta name="description" content="A beachside business game for 1 to 4 players. The TV shows the beach; your phone runs your bar.">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#123c4a;--muted:#5f7f8c;--coral:#ff6b5e;--coral2:#ff8a5e;--teal:#14b8a6}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Inter,system-ui,sans-serif;color:var(--ink);
+    background:linear-gradient(180deg,#7dd8f7 0%,#cdeffb 45%,#ffe9c4 46%,#f3d8a4 100%);padding:16px}
+  main{background:rgba(255,255,255,.94);border-radius:28px;padding:32px 28px;max-width:440px;width:100%;text-align:center;box-shadow:0 30px 60px -24px rgba(18,60,74,.55)}
+  .logo{font-size:64px;line-height:1}
+  h1{margin:8px 0 4px;font-size:40px;font-weight:900;letter-spacing:-.03em;background:linear-gradient(135deg,var(--coral),#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent}
+  p{color:var(--muted);font-weight:600;margin:0 0 22px}
+  a.btn,button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:56px;border-radius:999px;border:0;font:800 18px Inter,system-ui;text-decoration:none;cursor:pointer;margin-top:12px}
+  a.tv{background:linear-gradient(135deg,var(--coral),var(--coral2));color:#fff}
+  button{background:var(--teal);color:#fff}
+  input{width:100%;min-height:56px;border-radius:18px;border:2px solid #f0e2c8;font:800 24px Inter,system-ui;text-align:center;letter-spacing:.3em;text-transform:uppercase;color:var(--ink);margin-top:18px;outline:none}
+  input:focus{border-color:var(--teal)}
+  small{display:block;margin-top:18px;color:var(--muted);font-weight:600;font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <div class="logo">🍹</div>
+  <h1>Cocktail Shack</h1>
+  <p>A beachside business game for 1 to 4 players</p>
+  <a class="btn tv" href="/tv">📺 Host on this screen</a>
+  <form id="f"><input id="c" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" aria-label="Room code"><button>📱 Join with a code</button></form>
+  <small>Open “Host” on the laptop plugged into the TV, then everyone scans the code with their phone.</small>
+</main>
+<script>
+document.getElementById('f').onsubmit = e => { e.preventDefault(); const c = document.getElementById('c').value.trim().toUpperCase(); if (/^[A-Z]{4}$/.test(c)) location.href = '/play/' + c; };
+</script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#ff6b5e">
+<title>Cocktail Shack</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#123c4a; --muted:#5f7f8c; --coral:#ff6b5e; --coral2:#ff8a5e; --teal:#14b8a6; --amber:#f59e0b; --violet:#8b5cf6;
+  --sand:#ffe9c4; --sand2:#f3d8a4; --sea:#0aa7c2; --good:#16a34a; --mid:#d97706; --bad:#dc2626;
+  --card:#ffffff; --bg:#fff7ea; --line:#f0e2c8; --me:#ff6b5e;
+  --safe-b:env(safe-area-inset-bottom,0px); --safe-t:env(safe-area-inset-top,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);
+  font:16px/1.4 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+header{flex:none;padding:calc(10px + var(--safe-t)) 16px 10px;background:linear-gradient(180deg,#fff,#fffaf2);
+  border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;min-height:64px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-weight:700;color:#fff;
+  background:var(--me);max-width:46vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip .badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.3);font-size:12px}
+.hstats{margin-left:auto;text-align:right;line-height:1.15}
+.hstats .cash{font-weight:800;font-size:20px;font-variant-numeric:tabular-nums}
+.hstats .sub{font-size:12px;color:var(--muted);font-weight:600}
+.hstats .debt{color:var(--bad)}
+.ring{flex:none;width:44px;height:44px;position:relative}
+.ring svg{transform:rotate(-90deg)}
+.ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:800}
+main{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px 24px;display:flex;flex-direction:column;gap:12px}
+footer{flex:none;padding:10px 16px calc(10px + var(--safe-b));background:#fff;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center}
+footer:empty{display:none}
+.card{background:var(--card);border-radius:20px;padding:14px 16px;box-shadow:0 1px 0 var(--line),0 6px 18px -12px rgba(18,60,74,.35)}
+.card h3{margin:0 0 8px;font-size:14px;letter-spacing:.02em;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:8px}
+.card h3 .r{margin-left:auto;color:var(--ink);font-size:14px}
+.hint{font-size:13px;color:var(--muted);margin-top:6px}
+.btn{appearance:none;border:0;border-radius:999px;font:inherit;font-weight:800;min-height:52px;padding:0 22px;cursor:pointer;
+  background:linear-gradient(135deg,var(--coral),var(--coral2));color:#fff;flex:1;font-size:17px;transition:transform .08s,opacity .2s}
+.btn:active{transform:scale(.97)}
+.btn.teal{background:var(--teal)} .btn.ghost{background:#fff;color:var(--ink);box-shadow:inset 0 0 0 2px var(--line)}
+.btn.small{min-height:44px;font-size:14px;padding:0 14px;flex:none}
+.btn:disabled{opacity:.4;pointer-events:none}
+.row{display:flex;gap:10px;align-items:center}
+.stepper{display:flex;align-items:center;gap:8px;margin:2px 0}
+.stepper button{width:56px;height:56px;border-radius:18px;border:0;background:#fff3e0;color:var(--ink);font:800 28px Inter,system-ui;
+  box-shadow:inset 0 0 0 2px var(--line);touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.stepper button:active{background:#ffe2bf}
+.stepper button:disabled{opacity:.35}
+.stepper .val{flex:1;text-align:center;font-weight:800;font-size:34px;font-variant-numeric:tabular-nums}
+.stepper .val small{font-size:15px;color:var(--muted);font-weight:700;margin-left:2px}
+.gauge{height:8px;border-radius:99px;background:#f6ead6;overflow:hidden;margin-top:8px}
+.gauge i{display:block;height:100%;background:linear-gradient(90deg,var(--teal),#2dd4bf);border-radius:99px;transition:width .2s}
+.quick{display:flex;gap:8px;margin-top:10px}
+.quick button{flex:1;min-height:44px;border-radius:14px;border:0;background:#eef8f7;color:#0f766e;font:700 14px Inter,system-ui}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:#f3f7f8;font-weight:700;font-size:14px}
+.pill.big{background:#fff1d6;color:#b45309}
+.bulletin{display:flex;flex-wrap:wrap;gap:8px}
+.up{color:var(--bad);font-weight:800}
+.outlay{font-weight:700}
+.outlay.over{color:var(--bad)}
+.banner{border-radius:16px;padding:12px 14px;font-weight:600;font-size:14px}
+.banner.red{background:#fde8e8;color:#991b1b}
+.banner.amber{background:#fff4dc;color:#92400e}
+.banner.teal{background:#e6faf7;color:#115e59}
+.staffrow{display:flex;align-items:center;gap:10px}
+.staffrow .n{font-size:30px;font-weight:800;min-width:30px}
+.staffrow .people{flex:1;font-size:22px;letter-spacing:2px;overflow:hidden;white-space:nowrap}
+.loan{background:linear-gradient(135deg,#fff7d6,#ffe9c4)}
+.big-n{font-size:64px;font-weight:800;text-align:center;font-variant-numeric:tabular-nums;line-height:1}
+.big-n small{font-size:28px;color:var(--muted)}
+.center{text-align:center}
+table.rep{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+table.rep td{padding:7px 0;border-bottom:1px solid #f4ecdc}
+table.rep td:last-child{text-align:right;font-weight:700}
+table.rep tr.sub td{color:var(--muted);font-size:14px;padding:3px 0 3px 14px;border:0}
+table.rep tr.tot td{font-weight:800;font-size:18px;border-bottom:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fb{border-radius:16px;padding:10px 12px;background:#fff;border-left:6px solid;box-shadow:0 1px 0 var(--line)}
+.fb .top{display:flex;align-items:center;gap:6px;font-weight:800;font-size:14px}
+.fb .face{margin-left:auto;font-size:24px}
+.fb p{margin:6px 0 0;font-size:13px;color:var(--muted)}
+.rivals{display:flex;flex-direction:column;gap:6px}
+.rival{display:flex;align-items:center;gap:8px;font-weight:600}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+.rival .nw{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:800}
+details summary{list-style:none;cursor:pointer}
+details summary::-webkit-details-marker{display:none}
+input[type=text]{width:100%;font:700 22px Inter,system-ui;padding:14px 16px;border-radius:16px;border:2px solid var(--line);color:var(--ink);background:#fff;outline:none}
+input[type=text]:focus{border-color:var(--teal)}
+.title{font-weight:800;font-size:34px;letter-spacing:-.02em;margin:10px 0 0;text-align:center}
+.tag{color:var(--muted);text-align:center;margin:4px 0 6px}
+.shack{font-size:72px;text-align:center;line-height:1}
+.toast{position:fixed;left:16px;right:16px;bottom:calc(84px + var(--safe-b));background:var(--ink);color:#fff;border-radius:16px;padding:12px 16px;font-weight:600;
+  transform:translateY(20px);opacity:0;transition:.25s;pointer-events:none;z-index:9}
+.toast.show{transform:none;opacity:1}
+.offline{position:fixed;top:calc(70px + var(--safe-t));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:6px 14px;border-radius:99px;font-size:13px;font-weight:700;z-index:9;display:none}
+.offline.show{display:block}
+.spark{width:100%;height:46px;margin-top:8px}
+.lockedmsg{font-weight:700;flex:1;font-size:15px}
+.podium{font-size:56px;text-align:center}
+@media (orientation:landscape) and (min-width:640px){
+  main{display:grid;grid-template-columns:1fr 1fr;align-content:start}
+  main>.wide{grid-column:1/-1}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="hdr"></header>
+  <main id="main"></main>
+  <footer id="foot"></footer>
+</div>
+<div class="offline" id="offline">Reconnecting…</div>
+<div class="toast" id="toast"></div>
+<script type="module" src="/play.js"></script>
+</body>
+</html>
