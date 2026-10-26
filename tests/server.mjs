@@ -32,11 +32,12 @@ async function phone(i, token) {
     if (m.type === 'state') {
       const prev = p.state; p.state = m;
       if (m.report) p.reports[m.week] = m.report;
-      if (m.phase === 'planning' && !m.me.locked && m.me.status === 'active' && (!prev || prev.phase !== 'planning' || prev.week !== m.week || p.relock)) {
-        p.relock = false;
+      const fresh = !prev || prev.phase !== 'planning' || prev.week !== m.week;
+      if (m.phase === 'planning' && !m.me.locked && m.me.status === 'active' && (fresh || p.relock || Date.now() - (p.lastTry || 0) > 1500)) {
+        p.relock = false; p.lastTry = Date.now();
         const info = m.info;
-        if (info.loan && i === 1) ws.send2({ type: 'loan.take' });
-        if (i === 0 && m.week === 2) ws.send2({ type: 'staff.hire' });
+        if (fresh && info.loan && i === 1) ws.send2({ type: 'loan.take' });
+        if (fresh && i === 0 && m.week === 2) ws.send2({ type: 'staff.hire' });
         const k = m.costs.mixCost, budget = m.me.cash - (m.me.staff - 1) * 50 - 2 * m.costs.adCost;
         const drinks = Math.max(0, Math.min(m.me.staff * 25, Math.floor(budget / k)));
         setTimeout(() => ws.send2({ type: 'plan.lock', plan: { drinks, ads: 2, price: 14 + i * 3 } }), 200 + i * 150);
