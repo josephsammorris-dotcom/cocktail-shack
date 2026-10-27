@@ -16,6 +16,45 @@ let joined = store.get();
 let screen = null, screenKey = '';
 let draft = null, lastEdit = 0, sendTimer = null;
 let fatal = null;
+let photos = {};                          // slot -> selfie data URL, from the server
+const PHOTO_KEY = 'cocktail-shack-photo';
+const myPhoto = { get() { try { return localStorage.getItem(PHOTO_KEY); } catch (e) { return null; } },
+  set(v) { try { v ? localStorage.setItem(PHOTO_KEY, v) : localStorage.removeItem(PHOTO_KEY); } catch (e) {} } };
+
+// a selfie from the front camera via the file picker (works on iPhone and Android with no permission prompt),
+// cropped to a square around the face and shrunk to 160 px, about 10 KB
+async function photoFromFile(f) {
+  let img;
+  try { img = await createImageBitmap(f); } catch (e) { img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(f); }); }
+  const w = img.width, h = img.height, k = Math.min(w, h), c = document.createElement('canvas'); c.width = c.height = 160;
+  c.getContext('2d').drawImage(img, (w - k) / 2, (h - k) * 0.35, k, k, 0, 0, 160, 160);
+  return c.toDataURL('image/jpeg', 0.82);
+}
+const avatar = (slot, colour, cls = 'av') => photos[slot] ? `<img class="${cls}" src="${photos[slot]}" alt="" style="--pc:${colour}">` : `<span class="dot" style="background:${colour}"></span>`;
+
+/** The selfie card: a preview and Take / Retake / Remove. `live` sends changes to the game straight away. */
+function photoCardHTML() {
+  return `<div class="card"><h3>📷 Your photo <span class="r hint" style="margin:0">optional</span></h3>
+    <div class="photoRow"><div class="pPic" id="pPic"></div>
+      <div class="photoBtns"><button class="btn teal small" id="snap"></button><button class="btn ghost small" id="unsnap">Remove</button>
+      <div class="hint" style="margin:0">Shown above your bar on the TV.</div></div>
+      <input type="file" id="pFile" accept="image/*" capture="user" hidden></div></div>`;
+}
+function wirePhotoCard(live) {
+  const show = () => {
+    const ph = myPhoto.get();
+    $('pPic').style.backgroundImage = ph ? `url(${ph})` : ''; $('pPic').classList.toggle('empty', !ph);
+    $('snap').textContent = ph ? '📷 Retake' : '📷 Take a selfie'; $('unsnap').classList.toggle('hide', !ph);
+  };
+  $('snap').onclick = () => $('pFile').click();
+  $('pFile').onchange = async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try { const url = await photoFromFile(f); myPhoto.set(url); show(); if (live) conn.send({ type: 'photo', photo: url }); vibrate(15); }
+    catch (er) { toast("Couldn't use that photo. Try again."); }
+  };
+  $('unsnap').onclick = () => { myPhoto.set(null); show(); if (live) conn.send({ type: 'photo', photo: null }); };
+  show();
+}
 let wakeLock = null;
 
 const vibrate = ms => { try { navigator.vibrate?.(ms); } catch (e) {} };
@@ -30,7 +69,7 @@ if (!/^[A-Z]{4}$/.test(code)) renderCodeEntry();
 const conn = /^[A-Z]{4}$/.test(code) ? new Conn(code, 'player', {
   onMessage, onStatus: s => $('offline').classList.toggle('show', s !== 'open' && !fatal),
 }) : null;
-if (conn) conn.onOpen = () => { if (joined?.token) conn.send({ type: 'rejoin', token: joined.token }); else render(); };
+if (conn) conn.onOpen = () => { if (joined?.token) conn.send({ type: 'rejoin', token: joined.token, photo: myPhoto.get() || undefined }); else render(); };
 
 function onMessage(m) {
   switch (m.type) {
@@ -39,6 +78,7 @@ function onMessage(m) {
       joined = { token: m.token, id: m.id, slot: m.slot, colour: m.colour };
       store.set(joined); break;
     case 'state': S = m; render(); break;
+    case 'photos': photos = m.photos || {}; hdr.dataset.k = ''; ['p-rivals'].forEach(id => { const el = $(id); if (el) el.dataset.k = ''; }); if (S) render(); break;
     case 'refused': toast(m.reason); vibrate([30, 40, 30]); lastEdit = 0; break;
     case 'note': toast(m.text); break;
     case 'error':
@@ -94,7 +134,7 @@ function renderHeader() {
   }
   const me = S.me;
   const week = S.phase === 'lobby' ? 'Waiting to start' : S.phase === 'finale' ? 'Game over' : `Week ${S.week} of ${S.weeks}`;
-  const html = `<div class="chip"><span class="badge">${LETTER[me.slot]}</span>${esc(me.bar)}</div>
+  const html = `<div class="chip">${photos[me.slot] ? `<img class="chipPic" src="${photos[me.slot]}" alt="">` : `<span class="badge">${LETTER[me.slot]}</span>`}${esc(me.bar)}</div>
     <div class="hstats"><div class="cash">${money(me.cash)}</div><div class="sub">${week}${me.debt ? ` · <span class="debt">owe ${money(me.debt)}</span>` : ''}</div></div>
     <div class="ring" id="ring"></div>`;
   if (hdr.dataset.k !== html) { hdr.innerHTML = html; hdr.dataset.k = html; }
@@ -159,7 +199,7 @@ function sparkline(hist) {
 function rivalsHTML() {
   if (!S.rivals.length) return '';
   return `<div class="card"><h3>🏖️ Rival bars</h3><div class="rivals">${S.rivals.map(r => `
-    <div class="rival"><span class="dot" style="background:${r.colour}"></span>${esc(r.bar)}
+    <div class="rival">${avatar(r.slot, r.colour)}${esc(r.bar)}
       <span class="hint" style="margin:0">${r.status === 'out' ? 'OUT' : `${r.staff} staff${S.phase === 'planning' ? (r.locked ? ' · locked in' : ' · planning') : ''}`}</span>
       <span class="nw">${r.netWorth == null ? '' : money(r.netWorth)}</span></div>`).join('')}</div></div>`;
 }
@@ -189,20 +229,22 @@ BUILD.join = () => {
     <div class="card"><h3>Name your bar</h3>
       <input type="text" id="name" maxlength="14" autocomplete="off" placeholder="The Red Parrot" enterkeyhint="go">
       <div class="hint">Up to 14 characters. You'll get the next free colour on the beach.</div></div>
-    ${tvBanner ? '' : ''}`;
+    ${photoCardHTML()}`;
   foot.innerHTML = `<button class="btn" id="join">Join room ${esc(code)}</button>`;
-  const go = () => { conn.send({ type: 'join', name: $('name').value, token: joined?.token }); $('join').disabled = true; setTimeout(() => { const b = $('join'); if (b) b.disabled = false; }, 2500); };
+  const go = () => { conn.send({ type: 'join', name: $('name').value, token: joined?.token, photo: myPhoto.get() || undefined }); $('join').disabled = true; setTimeout(() => { const b = $('join'); if (b) b.disabled = false; }, 2500); };
   $('join').onclick = go; $('name').onkeydown = e => { if (e.key === 'Enter') go(); };
+  wirePhotoCard(false);
 };
 
 BUILD.wait = () => {
   main.innerHTML = `<div class="card center"><div class="shack" style="font-size:56px">🏖️</div>
       <h2 style="margin:6px 0 0">You're on the beach!</h2><p class="hint" id="w-msg"></p></div>
-    <div class="card"><h3>Bars joined</h3><div class="rivals" id="w-list"></div></div><div id="w-tv"></div>`;
+    <div class="card"><h3>Bars joined</h3><div class="rivals" id="w-list"></div></div><div id="w-tv"></div>${photoCardHTML()}`;
   foot.innerHTML = '';
+  wirePhotoCard(true);
 };
 UPDATE.wait = () => {
-  $('w-list').innerHTML = S.lobby.map(p => `<div class="rival"><span class="dot" style="background:${p.colour}"></span>
+  $('w-list').innerHTML = S.lobby.map(p => `<div class="rival">${avatar(p.slot, p.colour)}
     <b>${LETTER[p.slot]}</b> ${esc(p.bar)} ${p.bot ? '<span class="hint" style="margin:0">computer</span>' : ''}${p.slot === S.me.slot ? '<span class="nw">you</span>' : ''}</div>`).join('');
   $('w-msg').textContent = S.isStarter ? 'Press Start when everyone is in.' : 'Waiting for the first player to press Start.';
   $('w-tv').innerHTML = tvBanner();
@@ -419,9 +461,9 @@ BUILD.final = () => {
       <h1 style="margin:4px 0">${f.solo ? 'Final score' : ord(f.position) + ' place'}</h1>
       <div class="big-n" style="font-size:44px">${money(f.netWorth)}</div>
       <p class="hint">net worth${f.debt ? ` (after ${money(f.debt)} still owed)` : ''}</p>
-      <h3 style="justify-content:center;color:var(--ink);font-size:17px">${f.solo ? esc(f.title) : `${esc(f.winner.bar)} takes the beach!`}</h3></div>
+      <h3 style="justify-content:center;color:var(--ink);font-size:17px">${f.solo ? esc(f.title) : f.standings.filter(x => x.position === 1).length > 1 ? 'A tie at the top!' : `${esc(f.winner.bar)} takes the beach!`}</h3></div>
     <div class="card"><h3>🏁 Final standings</h3><div class="rivals">${f.standings.map(s => `<div class="rival"><b>${s.position}</b>
-      <span class="dot" style="background:${s.colour}"></span>${esc(s.bar)}${s.out ? ' <span class="hint" style="margin:0">OUT</span>' : ''}
+      ${avatar(s.slot, s.colour)}${esc(s.bar)}${s.out ? ' <span class="hint" style="margin:0">OUT</span>' : ''}
       <span class="nw">${money(s.netWorth)}</span></div>`).join('')}</div></div>`;
   foot.innerHTML = `<button class="btn" id="again">Play again</button>`;
   $('again').onclick = () => { conn.cmd('playagain'); vibrate(20); };

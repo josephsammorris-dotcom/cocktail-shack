@@ -127,10 +127,48 @@ t('11 autopilot', () => {
 t('12 weather odds over 100,000 draws', () => {
   const g = E.createGame(42); g.settings.weeks = 12;
   const n = 100000, count = {}; let right = 0;
-  for (let i = 0; i < n; i++) { g.week = 1; E.beginBriefing(g); count[g.weather] = (count[g.weather] || 0) + 1; if (g.weather === g.forecast) right++; }
+  let far = 0;
+  for (let i = 0; i < n; i++) {
+    g.week = 1; E.beginBriefing(g); count[g.weather] = (count[g.weather] || 0) + 1; if (g.weather === g.forecast) right++;
+    if (Math.abs(E.WEATHER_SCALE.indexOf(g.weather) - E.WEATHER_SCALE.indexOf(g.forecast)) > 1) far++;
+  }
   ok(Math.abs(count.storm / n - 0.111) < 0.005, 'storm ' + count.storm / n);
   for (const w of ['sunny', 'scorcher', 'cloud', 'cool']) ok(Math.abs(count[w] / n - 0.222) < 0.005, w + ' ' + count[w] / n);
-  ok(Math.abs(right / n - 0.80) < 0.005, 'forecast right ' + right / n);
+  // retuned: a wrong forecast is always one step out, so it is right exactly 75% of the time
+  ok(Math.abs(right / n - 0.75) < 0.005, 'forecast right ' + right / n);
+  eq(far, 0, 'forecasts more than one step out');
+});
+
+t('seagulls or a storm abandon a match; other days keep their score', () => {
+  const gulls = soloGame({ week: 4 }); E.updatePlan(gulls, gulls.players[0], { drinks: 15, ads: 1, price: 15 });
+  const d = E.resolveDay(gulls, { U: 0.5, event: 'gulls' });
+  eq([gulls.fixture.abandoned, gulls.fixture.score, d.script.fixture.abandoned], [true, null, true]);
+  ok(/abandoned/.test(d.banner), d.banner);
+  const quiet = soloGame({ week: 3 }); E.resolveDay(quiet, { U: 0.5, event: 'gulls' });
+  eq(quiet.fixture.abandoned, false); ok(!/abandoned/.test(quiet.day.banner));
+  const storm = soloGame({ week: 4, weather: 'storm' }); E.resolveDay(storm, { U: 0.5 });
+  eq(storm.fixture.abandoned, true);
+  const fine = soloGame({ week: 4 }); E.resolveDay(fine, { U: 0.5, event: null });
+  eq([fine.fixture.abandoned, fine.fixture.score.length], [false, 2]);
+});
+
+t('walk-aways: sold out, too dear, and off to a cheaper rival', () => {
+  const g = E.createGame(3);
+  ['a', 'b'].forEach(id => E.addPlayer(g, { id, token: id, name: id }));
+  E.startGame(g); g.week = 6; g.weather = 'scorcher'; g.fixture = { ...E.fixtureFor(g, 6), seed: 1 }; E.beginPlanning(g);
+  E.updatePlan(g, g.players[0], { drinks: 10, ads: 2, price: 30 });   // dear, and a small batch
+  E.updatePlan(g, g.players[1], { drinks: 25, ads: 2, price: 12 });   // cheap
+  const d = E.resolveDay(g, { U: 0.5, event: null });
+  const dear = d.script.bars.find(b => b.slot === 0), cheap = d.script.bars.find(b => b.slot === 1);
+  const reasons = b => b.walkaways.map(w => w.reason);
+  ok(reasons(dear).includes('cheaper') && reasons(dear).includes('price'), 'dear bar: ' + reasons(dear));
+  ok(dear.walkaways.filter(w => w.reason === 'cheaper').every(w => w.to === 1), 'goes to the cheaper bar');
+  ok(!reasons(cheap).includes('price'), 'cheap bar loses nobody to price');
+  const lastSale = dear.saleTimesMs.at(-1);
+  ok(dear.walkaways.filter(w => w.reason === 'soldout').every(w => w.atMs > lastSale), 'sold-out walk-aways come after the last sale');
+  ok(d.script.bars.every(b => b.walkaways.length <= 15), 'capped');
+  // totals untouched
+  eq(d.script.totals[0].sold, d.results[0].sold);
 });
 
 t('13 event odds over 100,000 non-storm days', () => {

@@ -132,7 +132,7 @@ export class Volleyball {
     const was = this.group.visible;
     this.fixture = fixture;
     this.group.visible = !!fixture;
-    if (fixture && !was) { this.mode = 'warmup'; this.sets = [0, 0]; this.points = [0, 0]; this.flashText = null; this.rnd = mulberry(fixture.seed || 7); this.newRally(0, true); }
+    if (fixture && !was) { this.abandoned = false; this.mode = 'warmup'; this.sets = [0, 0]; this.points = [0, 0]; this.flashText = null; this.rnd = mulberry(fixture.seed || 7); this.newRally(0, true); }
     this.drawBoard();
   }
   startMatch(fixture) {
@@ -141,18 +141,25 @@ export class Volleyball {
     this.mode = 'match'; this.sets = [0, 0]; this.points = [0, 0]; this.flashText = null;
     this.rnd = mulberry(fixture.seed || 1);
     // when each set is won, spread through the 13-second day
-    const final = fixture.score || [2, 1];
+    this.abandoned = false;
+    // an abandoned match (seagulls or a storm) never finishes: no sets are awarded
+    const final = fixture.abandoned ? [0, 0] : fixture.score || [2, 1];
     const order = [...Array(final[0]).fill(0), ...Array(final[1]).fill(1)];
     for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
     // the match winner takes the last set
-    const winner = final[0] > final[1] ? 0 : 1, li = order.lastIndexOf(winner); [order[li], order[order.length - 1]] = [order[order.length - 1], order[li]];
+    const winner = final[0] > final[1] ? 0 : 1, li = order.lastIndexOf(winner);
+    if (li >= 0) [order[li], order[order.length - 1]] = [order[order.length - 1], order[li]];
     this.schedule = order.map((team, i) => ({ team, at: 2500 + (9800 * (i + 1)) / order.length, done: false }));
     this.ms = 0;
     this.newRally(winner === 0 ? 1 : 0, false);
     this.drawBoard();
   }
-  endMatch() { if (this.mode === 'match') { this.mode = 'done'; this.flashText = null; this.drawBoard(); } }
-  onEvent(type) { if (type === 'extra' && this.mode === 'match') { this.flashText = 'THIRD SET!'; this.cheer = 1; } }
+  endMatch() { if (this.mode === 'match') { this.mode = 'done'; this.flashText = this.abandoned ? 'MATCH ABANDONED' : null; this.drawBoard(); } }
+  onEvent(type) {
+    if (this.mode !== 'match') return;
+    if (type === 'extra') { this.flashText = 'THIRD SET!'; this.cheer = 1; }
+    if (type === 'gulls' || type === 'storm') { this.abandoned = true; this.flashText = 'MATCH ABANDONED'; this.drawBoard(); }
+  }
 
   // ---------------------------------------------------------------- the rally engine
   newRally(team, quick) {

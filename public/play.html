@@ -103,6 +103,13 @@ input[type=text]:focus{border-color:var(--teal)}
 .spark{width:100%;height:46px;margin-top:8px}
 .lockedmsg{font-weight:700;flex:1;font-size:15px}
 .podium{font-size:56px;text-align:center}
+.av{width:30px;height:30px;border-radius:50%;object-fit:cover;flex:none;box-shadow:0 0 0 2px var(--pc)}
+.chipPic{width:26px;height:26px;border-radius:50%;object-fit:cover;margin-left:-6px;box-shadow:0 0 0 2px rgba(255,255,255,.7)}
+.photoRow{display:flex;gap:14px;align-items:center}
+.photoBtns{display:grid;gap:8px;justify-items:start}
+.pPic{width:84px;height:84px;border-radius:50%;flex:none;background:#f6ead6 center/cover no-repeat;box-shadow:0 0 0 3px var(--me)}
+.pPic.empty{display:grid;place-items:center}.pPic.empty::after{content:"🙂";font-size:2.2rem;opacity:.5}
+.hide{display:none!important}
 @media (orientation:landscape) and (min-width:640px){
   main{display:grid;grid-template-columns:1fr 1fr;align-content:start}
   main>.wide{grid-column:1/-1}

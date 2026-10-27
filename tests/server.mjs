@@ -16,8 +16,11 @@ function client(code, role, onMsg) {
 
 const { code } = await (await fetch(BASE + '/api/new')).json();
 console.log('room', code);
-let tv = null, scripts = {}, results = {};
+let tv = null, scripts = {}, results = {}, tvPhotos = {};
+// a tiny valid JPEG, standing in for a selfie
+const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
 const tvWs = await client(code, 'tv', m => {
+  if (m.type === 'photos') { tvPhotos = m.photos; return; }
   if (m.type !== 'tv') return; tv = m;
   if (m.phase === 'matchday' && m.script) scripts[m.week] = m.script;
 });
@@ -27,7 +30,7 @@ const phones = [];
 async function phone(i, token) {
   const p = phones[i] ||= { i, state: null, token: null, reports: {} };
   p.ws = await client(code, 'player', (m, ws) => {
-    if (m.type === 'hello') ws.send2(token ? { type: 'rejoin', token } : { type: 'join', name: 'Bar ' + i });
+    if (m.type === 'hello') ws.send2(token ? { type: 'rejoin', token } : { type: 'join', name: 'Bar ' + i, photo: i === 0 ? PHOTO : undefined });
     if (m.type === 'joined') p.token = m.token;
     if (m.type === 'refused' && process.env.DEBUG) console.log(`  phone ${i} refused:`, m.reason, 'week', p.state?.week, 'cash', p.state?.me.cash, 'staff', p.state?.me.staff);
     if (m.type === 'state') {
@@ -51,6 +54,11 @@ async function phone(i, token) {
 for (let i = 0; i < N; i++) { await phone(i); await sleep(200); }
 await sleep(500);
 check(tv.bars.length === N, 'all phones seated');
+check(tvPhotos[0] === PHOTO && !tvPhotos[1], 'the TV gets the selfie of the player who sent one');
+phones[1].ws.send2({ type: 'photo', photo: PHOTO }); await sleep(400);
+check(tvPhotos[1] === PHOTO, 'a selfie taken in the lobby reaches the TV');
+phones[1].ws.send2({ type: 'photo', photo: 'data:image/png;base64,AAAA' }); await sleep(300);
+check(tvPhotos[1] === PHOTO, 'a bad photo is refused');
 phones[0].ws.send2({ type: 'start' });
 
 let reconnected = false;

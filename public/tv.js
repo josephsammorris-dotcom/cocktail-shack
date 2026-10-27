@@ -2,7 +2,7 @@
 import { Conn, money, esc, WEATHER_ICON, FACE, LETTER } from '/net.js';
 
 // "🏐 Beach Cup Final: Home v Pelican Key", or a quiet day with no match
-const fixtureText = f => !f ? '' : f.match ? `🏐 ${f.big || 'Beach Volleyball'}: Home v ${f.away}` : '🏖️ No match today';
+const fixtureText = f => !f ? '' : f.match ? `${f.big ? '🏆 ' + f.big.replace('Beach Cup ', '') : '🏐 Volleyball'}: Home v ${f.away}` : '🏖️ No match today';
 import { Beach } from '/scene.js';
 import { Sound } from '/audio.js';
 
@@ -15,6 +15,8 @@ let S = null, P = null;           // current and previous server snapshot
 let conn = null, code = null;
 let debug = false, menuOpen = false;
 let lastSaleTimes = [];
+let photos = {};                       // slot -> selfie, from the server
+const pic = (slot, colour, cls = 'pic') => photos[slot] ? `<img class="${cls}" src="${photos[slot]}" alt="" style="--pc:${colour}">` : null;
 
 // ------------------------------------------------------------------ room
 async function newRoom() {
@@ -29,6 +31,7 @@ function connect(c) {
   conn = new Conn(c, 'tv', {
     onMessage: m => {
       if (m.type === 'tv') onState(m);
+      else if (m.type === 'photos') { photos = m.photos || {}; beach.setPhotos(photos); if (S) { if (S.phase === 'lobby') renderLobby(); if (S.phase === 'results') renderResults(); if (S.phase === 'finale') renderFinale(); } }
       else if (m.type === 'error' && m.code === 'noroom') { conn.closedForGood = true; newRoom(); }
       else if (m.type === 'replaced') showError('The game moved to another TV tab. Close this one.');
     },
@@ -67,7 +70,7 @@ function renderLobby() {
   }
   $('seats').innerHTML = [0, 1, 2, 3].map(i => {
     const b = S.bars.find(x => x.slot === i);
-    return b ? `<div class="seat" style="background:${b.colour}"><span class="l">${LETTER[i]}</span>${esc(b.bar)}${b.bot ? ' 🤖' : ''}${b.connected ? '' : ' 📵'}</div>`
+    return b ? `<div class="seat" style="background:${b.colour}">${pic(i, '#fff') || `<span class="l">${LETTER[i]}</span>`}${esc(b.bar)}${b.bot ? ' 🤖' : ''}${b.connected ? '' : ' 📵'}</div>`
       : `<div class="seat empty"><span class="l">${LETTER[i]}</span>Free</div>`;
   }).join('');
   const starter = S.bars.find(b => b.starter);
@@ -103,7 +106,7 @@ function renderResults() {
     const r = S.results.find(x => x.slot === st.slot);
     const faces = r?.faces ? ['mix', 'ads', 'price', 'staff'].map(k => FACE[r.faces[k]]).join('') : (r ? '⛈️' : '');
     return `<tr class="${st.out && !r?.eliminated ? 'out' : ''}">
-      <td class="bar"><span class="sw" style="background:${st.colour}">${LETTER[st.slot]}</span>${esc(st.bar)}${st.out ? ' <span class="neg">OUT</span>' : ''}</td>
+      <td class="bar">${pic(st.slot, st.colour) || `<span class="sw" style="background:${st.colour}">${LETTER[st.slot]}</span>`}${esc(st.bar)}${st.out ? ' <span class="neg">OUT</span>' : ''}</td>
       <td>${money(st.netWorth)}</td><td>${r ? money(r.takings) : '—'}</td>
       <td class="${r && r.profit < 0 ? 'neg' : 'pos'}">${r ? (r.profit >= 0 ? '+' : '') + money(r.profit) : '—'}</td>
       <td>${money(st.cash)}</td><td class="${st.debt ? 'neg' : ''}">${st.debt ? money(st.debt) : '—'}</td>
@@ -124,10 +127,11 @@ function renderFinale() {
   const h = { 1: 26, 2: 19, 3: 14 };
   const medal = { 1: '🥇', 2: '🥈', 3: '🥉' };
   const solo = st.length === 1;
-  $('finale').innerHTML = `<h1>${solo ? esc(st[0].bar) : `🏆 ${esc(st[0].bar)} takes the beach!`}</h1>
+  const tie = st.filter(x => x.position === 1).length > 1;
+  $('finale').innerHTML = `<h1>${solo ? esc(st[0].bar) : tie ? '🏆 A tie at the top!' : `🏆 ${esc(st[0].bar)} takes the beach!`}</h1>
     <div class="podium">${order.map(s => `<div class="step" style="background:${s.out ? '#94a3b8' : s.colour};height:calc(var(--u)*${h[Math.min(3, s.position)] || 12})">
-      <div class="m">${s.out ? '🏚️' : medal[s.position] || ''}</div><div class="n">${esc(s.bar)}</div><div class="w">${money(s.netWorth)}</div></div>`).join('')}</div>
-    ${st.length > 3 || st.some(s => s.out) ? `<table class="lb" style="max-width:40em;margin:0 auto">${st.map(s => `<tr class="${s.out ? 'out' : ''}"><td class="bar"><b>${s.position}</b><span class="sw" style="background:${s.colour}">${LETTER[s.slot]}</span>${esc(s.bar)}${s.out ? ' OUT' : ''}</td><td>${money(s.netWorth)}${s.debt ? ` <span class="neg">(owes ${money(s.debt)})</span>` : ''}</td></tr>`).join('')}</table>` : ''}
+      ${pic(s.slot, '#fff', 'face') || ''}<div class="m">${s.out ? '🏚️' : medal[s.position] || ''}</div><div class="n">${esc(s.bar)}</div><div class="w">${money(s.netWorth)}</div></div>`).join('')}</div>
+    ${st.length > 3 || st.some(s => s.out) ? `<table class="lb" style="max-width:40em;margin:0 auto">${st.map(s => `<tr class="${s.out ? 'out' : ''}"><td class="bar"><b>${s.position}</b>${pic(s.slot, s.colour) || `<span class="sw" style="background:${s.colour}">${LETTER[s.slot]}</span>`}${esc(s.bar)}${s.out ? ' OUT' : ''}</td><td>${money(s.netWorth)}${s.debt ? ` <span class="neg">(owes ${money(s.debt)})</span>` : ''}</td></tr>`).join('')}</table>` : ''}
     <div class="hint">Press <span class="kbd">Enter</span> or tap Play again on a phone for another game with the same bars.</div>`;
   show('finale', true);
 }
@@ -177,6 +181,7 @@ function onState(m) {
 function enterPhase() {
   const ph = S.phase;
   ['lobby', 'brief', 'results', 'finale'].forEach(id => show(id, false));
+  document.body.classList.toggle('card-up', ['briefing', 'results', 'finale'].includes(ph));
   $('clock').classList.add('hide');
   beach.mode = ph;
   beach.pullTarget = ph === 'results' || ph === 'finale' ? 1 : 0;

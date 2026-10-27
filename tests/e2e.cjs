@@ -32,6 +32,18 @@ async function until(page, fn, timeout = 30000) {
     p.on('console', m => { if (m.type() === 'error') errors.push(`P${i}: ` + m.text()); });
     await p.goto(`${BASE}/play/${code}`);
     await p.waitForSelector('#name');
+    // a stand-in selfie (a drawn face), as if taken with the phone's camera
+    if (i !== 1) {
+      await p.evaluate(i => {
+        const c = document.createElement('canvas'); c.width = c.height = 160; const x = c.getContext('2d');
+        x.fillStyle = ['#93c5fd', '#fde68a', '#bbf7d0'][i]; x.fillRect(0, 0, 160, 160);
+        x.fillStyle = ['#f2c7a5', '#8d5a3b', '#e0a982'][i]; x.beginPath(); x.arc(80, 88, 52, 0, 7); x.fill();
+        x.fillStyle = '#111'; x.beginPath(); x.arc(62, 86, 6, 0, 7); x.arc(98, 86, 6, 0, 7); x.fill();
+        x.strokeStyle = '#111'; x.lineWidth = 5; x.beginPath(); x.arc(80, 100, 22, 0.2, Math.PI - 0.2); x.stroke();
+        localStorage.setItem('cocktail-shack-photo', c.toDataURL('image/jpeg', 0.8));
+      }, i);
+      await p.reload(); await p.waitForSelector('#name');
+    }
     if (i === 0) await p.screenshot({ path: `${OUT}/phone-join.png` });
     await p.fill('#name', names[i]);
     await p.click('#join');

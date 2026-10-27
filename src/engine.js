@@ -62,15 +62,19 @@ export const WEATHER = {
   storm:    { label: 'A tropical storm',     crowd: 0.25, thirst: 0.60 },
 };
 export const WEATHER_TYPES = ['sunny', 'scorcher', 'cloud', 'cool', 'storm'];
+// worst to best: a wrong forecast is only ever one step out along this scale
+export const WEATHER_SCALE = ['storm', 'cool', 'cloud', 'sunny', 'scorcher'];
 const WEATHER_POOL = ['sunny', 'scorcher', 'cloud', 'cool', 'storm', 'sunny', 'scorcher', 'cloud', 'cool'];
 
 // ---------------------------------------------------------------- events (Section 9)
 export const EVENTS = {
   van:   { mult: 0.45, banner: "A rival juice van has pulled up on the sand and pinched half of everyone's customers!" },
-  gulls: { mult: 0.15, banner: 'A mob of seagulls has raided the beach, and the crowd has scattered!' },
+  gulls: { mult: 0.15, banner: 'A mob of seagulls has raided the beach, and the crowd has scattered!',
+           bannerMatch: 'A mob of seagulls has raided the beach! The crowd has scattered and the match has been abandoned.' },
   extra: { mult: 1.60, banner: 'The match went to a third set, and the crowd is gasping for a cold one!',
            bannerNoMatch: 'A beach party has kicked off, and everyone is gasping for a cold one!' },
-  storm: { mult: 1.00, banner: 'A storm rolled in off the sea. The beach all but emptied.' },
+  storm: { mult: 1.00, banner: 'A storm rolled in off the sea. The beach all but emptied.',
+           bannerMatch: 'A storm rolled in off the sea. The beach all but emptied and the match was abandoned.' },
 };
 
 // ---------------------------------------------------------------- fixtures (Sections 13, 18)
@@ -287,7 +291,11 @@ export function beginBriefing(g) {
   const idx = Math.floor(rngNext(g) * WEATHER_POOL.length);
   g.weather = WEATHER_POOL[idx];
   if (rngNext(g) < 0.75) g.forecast = g.weather;
-  else g.forecast = WEATHER_TYPES[Math.floor(rngNext(g) * WEATHER_TYPES.length)];
+  else {
+    // a wrong forecast is one step better or worse than the real weather, never a storm-to-scorcher surprise
+    const i = WEATHER_SCALE.indexOf(g.weather), down = rngNext(g) < 0.5;
+    g.forecast = WEATHER_SCALE[i === 0 ? 1 : i === WEATHER_SCALE.length - 1 ? i - 1 : down ? i - 1 : i + 1];
+  }
   g.fixture = fixtureFor(g, g.week);
   g.fixture.seed = Math.floor(rngNext(g, 'crng') * 1e6);
   g.day = null;
@@ -499,10 +507,13 @@ export function resolveDay(g, inject = {}) {
     if (eliminated) { p.status = 'out'; p.outWeek = g.week; }
   });
 
-  const banner = event ? (event === 'extra' && !g.fixture.match ? EVENTS.extra.bannerNoMatch : EVENTS[event].banner) : null;
+  // seagulls or a storm on a match day: the match is abandoned
+  g.fixture.abandoned = !!(g.fixture.match && (event === 'gulls' || event === 'storm'));
+  const ev = event && EVENTS[event];
+  const banner = !event ? null : event === 'extra' && !g.fixture.match ? ev.bannerNoMatch : g.fixture.abandoned ? ev.bannerMatch : ev.banner;
 
-  g.fixture.score = makeScore(g);
-  const script = buildScript(g, bars, results, event, banner);
+  g.fixture.score = g.fixture.abandoned ? null : makeScore(g);
+  const script = buildScript(g, bars, results, event, banner, split, B * E);
   const best = Object.values(results).filter(r => r.profit > 0).sort((a, b) => b.profit - a.profit)[0] || null;
   g.day = { week: g.week, U, A, B, E, M, event, banner, results, script,
     best: best ? { slot: best.slot, bar: best.bar, profit: best.profit } : null };
@@ -517,7 +528,35 @@ function makeScore(g) {
 }
 
 /** The TV's timeline (Section 13): a timestamp for every sale so the counters always end on `sold`. */
-function buildScript(g, bars, results, event, banner) {
+/**
+ * Walk-aways, for the TV to act out (cosmetic: the sales above are already settled).
+ * From the same sums: customers a bar's price put off (some of them to a cheaper rival), and thirsty
+ * customers who found it sold out. Each figure on screen stands for about four people, at most five a reason.
+ */
+function walkaways(bars, results, split, BE, r) {
+  const sumPull = split.reduce((a, x) => a + x.pull, 0);
+  const show = x => (x < 0.5 ? 0 : Math.min(5, Math.max(1, Math.round(x / 4))));
+  return bars.map((p, i) => {
+    const s = split[i], res = results[p.slot], out = [];
+    if (!res.mixed) return out;
+    // the share the bar would have had at a fair price, against what it got
+    const atFair = BE * s.adPull / (1 + sumPull - s.pull + s.adPull);
+    const priceLost = s.priceFactor < 1 ? Math.max(0, atFair - s.demand) : 0;
+    const rivals = bars.map((q, j) => ({ slot: q.slot, price: results[q.slot].price, mixed: results[q.slot].mixed, j }))
+      .filter(q => q.slot !== p.slot && q.mixed > 0 && q.price < res.price).sort((a, b) => a.price - b.price);
+    const toRival = rivals.length ? priceLost * 0.5 : 0;
+    for (let k = 0; k < show(toRival); k++) out.push({ atMs: Math.round(1500 + r() * 10500), reason: 'cheaper', to: rivals[0].slot });
+    for (let k = 0; k < show(priceLost - toRival); k++) out.push({ atMs: Math.round(1500 + r() * 10500), reason: 'price' });
+    // sold out: the rest of the thirsty crowd turns away once the last cocktail has gone
+    const soldOut = Math.max(0, roundHalfUp(s.demand) - res.sold);
+    if (res.sold >= res.mixed && soldOut > 0) {
+      for (let k = 0; k < show(soldOut); k++) out.push({ atMs: 0, reason: 'soldout' });
+    }
+    return out;
+  });
+}
+
+function buildScript(g, bars, results, event, banner, split, BE) {
   const durationMs = 14000;
   const r = () => rngNext(g, 'crng');
   const out = [];
@@ -535,7 +574,15 @@ function buildScript(g, bars, results, event, banner) {
     }
     times.sort((a, b) => a - b);
     out.push({ slot: p.slot, bar: p.bar, colour: p.colour, price: res.price, mixed: res.mixed, staff: p.staff,
-      ads: res.ads, saleTimesMs: times });
+      ads: res.ads, saleTimesMs: times, walkaways: [] });
+  }
+  if (split) {
+    const wa = walkaways(bars, results, split, BE, r);
+    out.forEach((b, i) => {
+      const last = b.saleTimesMs.length ? b.saleTimesMs[b.saleTimesMs.length - 1] : 1000;
+      b.walkaways = wa[i].map(w => w.reason === 'soldout' ? { ...w, atMs: Math.round(Math.min(12800, last + 400 + r() * Math.max(500, 12600 - last))) } : w)
+        .sort((x, y) => x.atMs - y.atMs);
+    });
   }
   const totals = {};
   for (const b of out) totals[b.slot] = { sold: b.saleTimesMs.length };

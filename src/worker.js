@@ -21,6 +21,8 @@ const BRIEFING_MS = 10000, ROLLOVER_MS = 3000, MATCH_LEAD_MS = 900, MATCH_TAIL_M
 const randCode = () => Array.from(crypto.getRandomValues(new Uint8Array(4)), b => LETTERS[b % LETTERS.length]).join('');
 const randToken = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 const randSeed = () => crypto.getRandomValues(new Uint32Array(1))[0];
+// a phone's selfie: a small square JPEG data URL (the phone makes it about 160 px, around 10 KB)
+const okPhoto = x => typeof x === 'string' && x.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(x);
 
 export default {
   async fetch(request, env) {
@@ -61,6 +63,7 @@ export class Room extends DurableObject {
   // ------------------------------------------------------------------ storage
   async load() {
     if (this.r === undefined) this.r = (await this.ctx.storage.get('r')) || null;
+    if (this.r && !this.r.photos) this.r.photos = {};
     return this.r;
   }
   async save() {
@@ -92,7 +95,7 @@ export class Room extends DurableObject {
       if (!fresh) return new Response('taken', { status: 409 });
       await this.ctx.storage.deleteAll();
       this.r = { code: url.searchParams.get('code'), origin: url.searchParams.get('origin'), created: Date.now(),
-        g: E.createGame(randSeed()), endsAt: null, startAt: null, paused: null, tvGoneAt: null, cids: {}, starter: null, log: [] };
+        g: E.createGame(randSeed()), endsAt: null, startAt: null, paused: null, tvGoneAt: null, cids: {}, starter: null, log: [], photos: {} };
       await this.save();
       return new Response('ok');
     }
@@ -114,6 +117,7 @@ export class Room extends DurableObject {
       if (this.r.paused) this.resume();
       await this.save();
       this.broadcast();
+      this.send(server, this.photosMsg());
     } else {
       this.send(server, { type: 'hello', code: this.r.code, phase: this.r.g.phase });
     }
@@ -122,7 +126,8 @@ export class Room extends DurableObject {
 
   // ------------------------------------------------------------------ messages
   async webSocketMessage(ws, data) {
-    if (typeof data !== 'string' || data.length > 4096) return;
+    // photos are the only big messages; everything else is a few hundred bytes
+    if (typeof data !== 'string' || data.length > 64000 || (data.length > 4096 && !data.includes('"type":"photo"'))) return;
     const now = Date.now();
     const rl = this.rate.get(ws) || { t: now, n: 0 };
     if (now - rl.t > 1000) { rl.t = now; rl.n = 0; }
@@ -172,6 +177,11 @@ export class Room extends DurableObject {
       case 'playagain':
         if (g.phase === 'finale') this.playAgain(); break;
       case 'sound': p.sound = !!msg.on; break;
+      case 'photo':
+        if (msg.photo === null) delete this.r.photos[p.id];
+        else if (okPhoto(msg.photo)) this.r.photos[p.id] = msg.photo;
+        else { res = { error: "Couldn't use that photo. Try another." }; break; }
+        await this.save(); this.broadcastPhotos(); return;
       default: return;
     }
     if (res.error) this.send(ws, { type: 'refused', cid: msg.cid, reason: res.error });
@@ -190,9 +200,11 @@ export class Room extends DurableObject {
     if (res.error) return this.send(ws, { type: 'error', code: 'full', message: res.error });
     if (!this.r.starter || !g.players.some(q => q.id === this.r.starter)) this.r.starter = id;
     ws.serializeAttachment({ role: 'player', pid: id });
+    if (okPhoto(msg.photo)) this.r.photos[id] = msg.photo;
     this.send(ws, { type: 'joined', id, token, slot: res.player.slot, colour: res.player.colour, bar: res.player.bar });
     await this.save();
     this.broadcast();
+    this.broadcastPhotos();
   }
 
   async onRejoin(ws, msg) {
@@ -202,9 +214,11 @@ export class Room extends DurableObject {
       this.send(old, { type: 'replaced' }); try { old.close(4001, 'replaced'); } catch (e) {}
     }
     ws.serializeAttachment({ role: 'player', pid: p.id });
+    if ('photo' in msg && okPhoto(msg.photo) && this.r.photos[p.id] !== msg.photo) { this.r.photos[p.id] = msg.photo; this.broadcastPhotos(); }
     this.send(ws, { type: 'joined', id: p.id, token: p.token, slot: p.slot, colour: p.colour, bar: p.bar });
     await this.save();
     this.broadcast();
+    this.send(ws, this.photosMsg());
   }
 
   async onTv(ws, msg) {
@@ -223,6 +237,7 @@ export class Room extends DurableObject {
         const p = g.players.find(q => q.slot === msg.slot);
         if (p) {
           E.removePlayer(g, p.id);
+          delete this.r.photos[p.id]; this.broadcastPhotos();
           for (const s of this.sockets()) if (this.meta(s).pid === p.id) { this.send(s, { type: 'removed' }); try { s.close(4002, 'removed'); } catch (e) {} }
           if (this.r.starter === p.id) this.r.starter = E.firstPlayer(g)?.id || null;
           if (g.phase !== 'lobby' && E.activePlayers(g).length === 0) { g.phase = 'finale'; this.r.endsAt = null; }
@@ -348,6 +363,14 @@ export class Room extends DurableObject {
 
   // ------------------------------------------------------------------ views (Section 15)
   send(ws, msg) { try { ws.send(JSON.stringify({ v: 1, now: Date.now(), ...msg })); } catch (e) {} }
+
+  // photos travel separately from the state, only when they change, so the frequent state messages stay small
+  photosMsg() {
+    const photos = {};
+    for (const p of this.r.g.players) if (!p.removed && this.r.photos[p.id]) photos[p.slot] = this.r.photos[p.id];
+    return { type: 'photos', photos };
+  }
+  broadcastPhotos() { const m = this.photosMsg(); for (const ws of this.sockets()) if (this.meta(ws).role === 'tv' || this.meta(ws).pid) this.send(ws, m); }
 
   broadcast() {
     if (!this.r) return;

@@ -45,6 +45,15 @@ Changes from the handbook:
   builds from 70% of the crowd in week 1 to full strength by week 5.
 - **Sell-outs are rarer.** Attendance is 52 + 28U (was 90 + 140U) and grows by 45% per extra player (was 25%), so a
   typical bar sees 30 to 45 thirsty customers on a sunny league day and the forecast, not luck, decides most days.
+- **A wrong forecast is only ever one step out** on the scale storm, chilly, cloudy, sunny, scorcher, so it is right
+  75% of the time (was 80%, but a wrong one could be anything).
+- **Seagulls or a storm on a match day abandon the match.** The crowd scatters and the players run for cover.
+- **Walk-aways.** The day script lists customers who turned away, from the same sums as the sales: put off by the
+  price, gone to a cheaper rival, or too late because the bar sold out. The TV shows them at the front of the queue
+  with a speech bubble. They're for show: the sales and takings are unchanged.
+- **Selfies.** Players can take an optional photo when they join (or later in the waiting room). It appears on their
+  bar's badge on the TV, in the lobby, the results table and the final podium. Photos travel in their own `photos`
+  message, so the frequent state updates stay small.
 - The four bar positions and the camera are pulled in a little so every bar fits a 16:9 TV, and room codes are claimed
   with a short `/api/new` call before the TV opens its socket.
 

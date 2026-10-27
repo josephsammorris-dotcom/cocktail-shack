@@ -79,16 +79,22 @@ function mergeStatic(group) {
 // a small seeded random for textures and layout, so the beach looks the same every time
 function seeded(seed) { let a = seed | 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-export function labelSprite(text, { bg = '#123c4a', fg = '#fff', font = 800, size = 64, pad = 28, letter = null, scale = 0.05 } = {}) {
+export function labelSprite(text, { bg = '#123c4a', fg = '#fff', font = 800, size = 64, pad = 28, letter = null, img = null, scale = 0.05 } = {}) {
   const meas = document.createElement('canvas').getContext('2d');
   meas.font = `${font} ${size}px Inter, system-ui, sans-serif`;
-  const tw = meas.measureText(text).width + (letter ? size * 1.2 : 0);
-  const w = Math.ceil(tw + pad * 2), h = Math.ceil(size * 1.6);
+  const ph = img ? size * 2.2 : 0;                      // a photo makes the badge taller, so the face reads on a TV
+  const tw = meas.measureText(text).width + (img ? ph + size * 0.35 : letter ? size * 1.2 : 0);
+  const w = Math.ceil(tw + pad * 2), h = Math.ceil(Math.max(size * 1.6, ph + 12));
   const tex = canvasTex(w, h, (ctx) => {
     ctx.fillStyle = bg; roundRect(ctx, 0, 0, w, h, h / 2); ctx.fill();
     ctx.font = `${font} ${size}px Inter, system-ui, sans-serif`; ctx.textBaseline = 'middle';
     let x = pad;
-    if (letter) {
+    if (img) {
+      const r = ph / 2, cx = x + r - 8, cy = h / 2;
+      ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.clip(); ctx.drawImage(img, cx - r, cy - r, ph, ph); ctx.restore();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(cx, cy, r - 3, 0, 7); ctx.stroke();
+      x += ph + size * 0.2;
+    } else if (letter) {
       ctx.fillStyle = 'rgba(255,255,255,.3)'; ctx.beginPath(); ctx.arc(x + size * 0.45, h / 2, size * 0.5, 0, 7); ctx.fill();
       ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.fillText(letter, x + size * 0.45, h / 2 + 2); x += size * 1.2;
     }
@@ -705,7 +711,7 @@ export class Beach {
     const closed = labelSprite('CLOSED', { bg: '#7f1d1d', scale: 0.04 }); closed.position.set(0, 5.4, 3.8); boards.add(closed);
 
     // name badge floating above, in the player's colour, with the seat letter
-    const badge = labelSprite(b.bar, { bg: b.colour, letter: LETTERS[b.slot], scale: 0.04 }); badge.position.set(0, 16.5, 0); g.add(badge);
+    const badge = labelSprite(b.bar, { bg: b.colour, letter: LETTERS[b.slot], img: this.photoImgs?.[b.slot] || null, scale: 0.04 }); badge.position.set(0, 16.5, 0); g.add(badge);
     // price board on an easel in front (appears at the start of the day)
     const price = labelSprite('15p', { bg: '#1f2937', fg: '#fde68a', size: 72, scale: 0.042 }); price.position.set(-6.2, 2.6, 5.4); price.visible = false; g.add(price);
     const easel = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 4), toon('#8b5a2b')); easel.position.set(-6.2, 1.3, 5.4); easel.rotation.y = Math.PI / 4; easel.castShadow = true; g.add(easel);
@@ -720,8 +726,21 @@ export class Beach {
 
   renameBar(bar, name) {
     bar.group.remove(bar.badge);
-    bar.badge = labelSprite(name, { bg: bar.colour, letter: LETTERS[bar.slot], scale: 0.04 }); bar.badge.position.set(0, 16.5, 0);
-    bar.group.add(bar.badge); bar.name = name;
+    bar.badge = labelSprite(name, { bg: bar.colour, letter: LETTERS[bar.slot], img: this.photoImgs?.[bar.slot] || null, scale: 0.04 }); bar.badge.position.set(0, 16.5, 0);
+    bar.group.add(bar.badge); bar.name = name; bar.photoKey = this.photos?.[bar.slot] || '';
+  }
+  /** Players' selfies, shown on their bar's floating badge. */
+  setPhotos(photos) {
+    this.photos = photos || {}; this.photoImgs ||= {};
+    for (let slot = 0; slot < 4; slot++) {
+      const url = this.photos[slot];
+      if (!url) { delete this.photoImgs[slot]; const bar = this.bars[slot]; if (bar && bar.photoKey) this.renameBar(bar, bar.name); continue; }
+      const bar = this.bars[slot];
+      if (bar && bar.photoKey === url) continue;
+      const im = new Image();
+      im.onload = () => { if (this.photos[slot] !== url) return; this.photoImgs[slot] = im; const b = this.bars[slot]; if (b) this.renameBar(b, b.name); };
+      im.src = url;
+    }
   }
 
   setStaff(bar, n) {
@@ -802,9 +821,16 @@ export class Beach {
   }
 
   /** How many of each kind of beachgoer, and how full the stands are, for this weather and fixture. */
+  /** A storm or a seagull raid empties the beach for the rest of the day. */
+  fleeing() {
+    const d = this.day; if (!d) return false;
+    if (this.weatherType === 'storm') return true;
+    const ev = d.script.event;
+    return ev?.type === 'gulls' && d.now() - d.startAt >= ev.atMs;
+  }
   crowdTargets() {
     const L = LOOKS[this.weatherType], match = !!this.fixture?.match;
-    const storming = this.weatherType === 'storm' && this.day;
+    const storming = this.fleeing();
     const p = storming ? 0 : L.people;
     const counts = {
       towel: Math.round(29 * Math.min(1, p * (match ? 0.75 : 0.85))),
@@ -821,7 +847,8 @@ export class Beach {
   // ---------------------------------------------------------------- the day
   /** Start playing the day script. now() returns server time; startAt is when the script's t = 0. */
   playDay(script, startAt, now, hooks = {}) {
-    this.day = { script, startAt, now, hooks, served: {}, chimes: [], chimeIdx: 0, eventFired: false };
+    this.day = { script, startAt, now, hooks, served: {}, chimes: [], chimeIdx: 0, eventFired: false, spawned: new Set() };
+    this.fleeStart = null;
     const total = script.bars.reduce((s, b) => s + b.saleTimesMs.length, 0);
     const n = total ? Math.min(12, Math.max(1, Math.round(total / 8))) : 0;
     for (let i = 0; i < n; i++) this.day.chimes.push(1000 + (12000 * (i + 0.5)) / n);
@@ -836,6 +863,8 @@ export class Beach {
     this.vb.startMatch(script.fixture);
   }
   stopDay() {
+    for (const w of this.walkAways || []) this.scene.remove(w.f);
+    this.walkAways = [];
     this.day = null; this.vb.endMatch(); this.van.visible = false; this.gulls.forEach(g => g.visible = false);
     for (const f of this.defectors) this.scene.remove(f);
     this.defectors = [];
@@ -942,8 +971,7 @@ export class Beach {
 
     this.updateDay(t, dt);
     this.updatePeople(t, dt);
-    const storming = this.day && this.weatherType === 'storm';
-    this.vb.update(t, dt, { storm: storming, ms: this.day ? this.day.now() - this.day.startAt : 0 });
+    this.vb.update(t, dt, { storm: this.fleeing(), ms: this.day ? this.day.now() - this.day.startAt : 0 });
 
     // camera: gentle drift, slow orbit in the lobby, pull back for results, nudge toward events
     this.camNudge.lerp(this.camNudgeTarget, 1 - Math.exp(-dt * 1.5));
@@ -964,6 +992,11 @@ export class Beach {
   /** Beachgoers and spectators come and go with the weather and the fixture; each pops in or out. */
   updatePeople(t, dt) {
     const { counts, stands } = this.crowdTargets();
+    // when the beach empties (storm or gulls), people leave over a couple of seconds, not all at once
+    const fleeing = this.fleeing();
+    if (fleeing && this.fleeStart == null) this.fleeStart = t;
+    if (!fleeing) this.fleeStart = null;
+    const leaving = fleeing ? (t - this.fleeStart) * 0.5 : null;
     const match = !!this.fixture?.match;
     // pick the first N of each kind by order, skipping spots the court takes up on match days
     const want = new Set();
@@ -981,7 +1014,7 @@ export class Beach {
       return g.visible;
     };
     for (const g of this.life) {
-      if (!pop(g, want.has(g))) continue;
+      if (!pop(g, want.has(g) || (leaving != null && g.userData.vis > 0 && g.userData.order > leaving))) continue;
       const u = g.userData;
       if (u.kind === 'towel') { const f = u.figure; f.position.y = 0.85 + Math.sin(t * 1.5 + u.order * 9) * 0.03; }
       else if (u.kind === 'pair' || u.kind === 'frisbee') {
@@ -1011,7 +1044,7 @@ export class Beach {
     }
     // the stands: the first N spectators by order, N set by the weather and the stage of the competition
     const n = Math.round(this.spectators.length * stands);
-    const storm = this.day && this.weatherType === 'storm';
+    const storm = this.fleeing();
     const cheer = this.vb.cheer;
     this.spectators.forEach((f, i) => {
       const u = f.userData, on = i < n || (storm && u.vis > 0);
@@ -1076,6 +1109,12 @@ export class Beach {
       if (dist > 0.3) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 13)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); }
       else { f.lookAt(this.van.position.x, 0, this.van.position.z); animateFigure(f, t, { cheer: 0.3, dt }); }
     }
+    // customers who reach the front and walk away: too dear, off to a cheaper bar, or sold out
+    if (day) for (const b of day.script.bars) {
+      const bar = this.bars[b.slot]; if (!bar || bar.boarded || !b.walkaways) continue;
+      b.walkaways.forEach((w, k) => { const key = b.slot + ':' + k; if (st >= w.atMs && !day.spawned.has(key)) { day.spawned.add(key); this.spawnWalkAway(bar, w, k); } });
+    }
+    this.walkAways = (this.walkAways || []).filter(w => this.stepWalkAway(w, t, dt));
     this.van.visible = false; this.gulls.forEach(g => g.visible = false); this.vanParked = false;
     this.camNudgeTarget.set(0, 0, 0);
     if (!day) return;
@@ -1106,6 +1145,45 @@ export class Beach {
         this.camNudgeTarget.set(0, 0, 2);
       }
     }
+  }
+
+  spawnWalkAway(bar, w, k = 0) {
+    const f = figure({ shirt: bar.colour, shorts: '#1f2937', scale: 0.9, eyes: false });
+    const at = this.queueSpot(bar, k % 2); const side = new THREE.Vector3(-bar.front.z, 0, bar.front.x).multiplyScalar(k % 2 ? 2.2 : -2.2);
+    f.position.set(at.x + side.x, 0, at.z + side.z);
+    f.lookAt(bar.group.position.x, 0, bar.group.position.z);
+    const rival = w.reason === 'cheaper' ? this.bars[w.to] : null;
+    const text = w.reason === 'price' ? '💸 Too dear!' : w.reason === 'soldout' ? '🚫 Sold out!' : `👉 Cheaper at ${LETTERS[w.to]}`;
+    const bubble = labelSprite(text, { bg: rival ? rival.colour : '#ffffff', fg: rival ? '#ffffff' : '#123c4a', size: 56, pad: 22, scale: 0.04 });
+    bubble.material.depthTest = false; bubble.renderOrder = 30;          // always readable, even behind a roof
+    bubble.position.set(0, 7.6 + (k % 2) * 2.6, 0);          // staggered, so two at once don't overlap
+    bubble.userData.base = bubble.scale.clone(); bubble.scale.setScalar(0.001);
+    f.add(bubble);
+    this.scene.add(f);
+    const away = bar.front.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.8));
+    this.walkAways ||= [];
+    this.walkAways.push({ f, w, bubble, t: 0, away, target: rival ? this.queueSpot(rival, 5 + Math.floor(Math.random() * 2)) : null });
+  }
+  /** Stand at the front and shake the head with the reason overhead, then leave. Returns false when done. */
+  stepWalkAway(o, t, dt) {
+    o.t += dt;
+    const f = o.f, b = o.bubble;
+    const pop = Math.min(1, o.t / 0.3), fade = Math.max(0, 1 - Math.max(0, o.t - 2.4) / 0.4);
+    b.scale.copy(b.userData.base).multiplyScalar(easeOutBack(pop) * fade + 0.001);
+    if (o.t < 0.8) {
+      f.rotation.y += Math.sin(o.t * 18) * 0.06;                  // a shake of the head
+      animateFigure(f, t, { bounce: 0.05, dt });
+    } else {
+      let dir;
+      if (o.target) { dir = o.target.clone().sub(f.position); if (dir.length() < 0.6) o.arrived ??= o.t; dir.normalize(); }
+      else dir = o.away;
+      if (o.arrived == null) { f.position.addScaledVector(dir, dt * (o.target ? 12 : 9)); f.rotation.y = Math.atan2(dir.x, dir.z); }
+      animateFigure(f, t, { walk: o.arrived == null ? 1 : 0, dt });
+    }
+    const end = o.target ? (o.arrived != null ? o.arrived + 0.5 : 6) : 3.2;
+    if (o.t > end - 0.5) f.scale.setScalar(f.userData.baseScale * Math.max(0.001, (end - o.t) / 0.5));
+    if (o.t >= end) { this.scene.remove(f); return false; }
+    return true;
   }
 
   qualityCheck(dt) {
