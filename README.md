@@ -57,7 +57,14 @@ Changes from the handbook:
   (from the optional "Your name" box, else the bar's name).
 - **Beach parties.** On a day with no match, the "extra" event is a beach party: a DJ booth with spinning decks,
   thumping speakers, flashing bulbs and light beams goes up in the middle of the beach, a crowd streams in to dance, and
-  the TV plays a party loop. (On match days the same event is a third set.)
+  the TV plays a party loop. (On match days the same event is a third set.) A party multiplies demand by 1.8 and
+  never lets the weather pull it below 90% of a normal day's, so even a chilly party sells plenty of cocktails.
+- **People walk around things.** Towels, sandcastles, palms, bars, the court, the DJ booth and the juice van are
+  obstacles; everyone on the beach steers round them rather than walking through.
+- **Seagulls clear the beach properly.** Sunbathers, sandcastle builders, ball players and walkers jump up and run
+  off the beach, leaving their towels and castles behind; everything is back in place the next day.
+- **Clothes.** Queues are dressed in a mix of colours (they used to wear their bar's colour, which made every
+  customer of the coral bar red), and on chilly or stormy days the volleyball crowd wears bright jumpers rather than dark ones.
 - **The briefing is a slim, see-through strip along the bottom of the TV**, so the beach stays in view.
 - **Customers keep their cocktails.** Each customer walks in from a spot on the beach and, once served, strolls back
   there with the drink in hand and stays, sipping, until the end of the day (or until seagulls or a storm clear the beach).

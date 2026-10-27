@@ -190,7 +190,8 @@ const G = {
 const SKINS = ['#f2c7a5', '#e0a982', '#c68a5e', '#8d5a3b', '#f7d8c0', '#b07a52'];
 const HAIRS = ['#3b2a20', '#6b4423', '#d9a441', '#1f1f1f', '#a0522d', '#e8d39b'];
 export const SHIRTS = ['#fef3c7', '#bae6fd', '#fecaca', '#d9f99d', '#e9d5ff', '#fde68a', '#a7f3d0', '#fbcfe8', '#ffffff', '#fdba74', '#93c5fd'];
-const JUMPERS = ['#64748b', '#475569', '#7c2d12', '#1e3a8a', '#365314', '#581c87'];
+// jumpers for chilly days: bright knits, not near-black (toon shading darkens colours a lot)
+const JUMPERS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#a855f7', '#ec4899', '#0ea5e9', '#84cc16'];
 const eyeMat = new THREE.MeshBasicMaterial({ color: '#1b2430' });
 
 const simpleGeoCache = new Map();
@@ -724,7 +725,7 @@ export class Beach {
   startParty() {
     if (this.partyOn) return;
     this.partyOn = true; this.partyT = 0; this.party.visible = true; this.party.scale.setScalar(0.01);
-    for (const f of this.dancers) { f.position.copy(f.userData.from); f.visible = true; f.userData.there = false; }
+    for (const f of this.dancers) { f.position.copy(f.userData.from); f.visible = true; f.userData.there = false; f.userData.tWalk = 0; }
     this.partyBalls.forEach(b => (b.visible = true));
   }
   stopParty() {
@@ -752,7 +753,7 @@ export class Beach {
       const u = f.userData;
       if (T < u.arrive) continue;
       const d = u.spot.clone().sub(f.position), dist = d.length();
-      if (!u.there && dist > 0.4) { d.normalize(); f.position.addScaledVector(d, Math.min(dist, dt * 11)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); continue; }
+      if (!u.there && dist > 0.4 && (u.tWalk = (u.tWalk || 0) + dt) < 6) { this.walkTo(f, u.spot, 11, dt); animateFigure(f, t, { walk: 1, dt }); continue; }
       u.there = true;
       const b = (beat + u.phase * 0.1) % 1, jump = u.style === 0 ? Math.abs(Math.sin(b * Math.PI)) * 1.2 : u.style === 2 ? Math.pow(1 - b, 2) * 0.6 : 0.15 * Math.abs(Math.sin(b * Math.PI * 2));
       f.position.y = jump;
@@ -886,7 +887,7 @@ export class Beach {
   setQueue(bar, n, toVan = false) {
     while (bar.queue.length < n) {
       const i = bar.queue.length;
-      const f = figure({ shirt: bar.colour, shorts: ['#123c4a', '#1f2937', '#ffffff'][i % 3], scale: 0.9, eyes: false });
+      const f = figure({ shirt: SHIRTS[Math.floor(Math.random() * SHIRTS.length)], shorts: ['#123c4a', '#1f2937', '#ffffff', '#7c2d12', '#0e7490'][Math.floor(Math.random() * 5)], scale: 0.9, eyes: false });
       f.userData.pop = 0; f.userData.origin = this.customerOrigin(bar);
       this.scene.add(f); bar.queue.push(f);
     }
@@ -906,6 +907,65 @@ export class Beach {
       bar.leavers.push(f);
     }
   }
+  // ---------------------------------------------------------------- not walking through things
+  /** Everything people should walk round: circles {x, z, r} and turned rectangles {x, z, rot, hx, hz}. */
+  obstacles() {
+    if (this._obsAt === this.t) return this._obs;
+    const o = [];
+    for (const g of this.life) {
+      if (!g.visible || g.userData.vis < 0.3) continue;
+      const k = g.userData.kind;
+      if (k === 'towel') o.push({ x: g.position.x, z: g.position.z, r: 3.1 });
+      else if (k === 'castle') o.push({ x: g.position.x, z: g.position.z, r: 3.2 });
+    }
+    for (const p of this.palms) o.push({ x: p.position.x, z: p.position.z, r: 1.4 });
+    for (const bar of this.bars) if (bar) o.push({ x: bar.group.position.x, z: bar.group.position.z, rot: bar.group.rotation.y, hx: 5.6, hz: 3.6 });
+    if (this.vb.group.visible) o.push({ x: 0, z: 0, rot: 0, hx: COURT.hx + 1, hz: COURT.hz + 1 });
+    if (this.partyOn) o.push({ x: 0, z: this.party.position.z, rot: 0, hx: 12.5, hz: 5.8 });
+    if (this.van.visible) o.push({ x: this.van.position.x + 1.5, z: this.van.position.z, rot: 0, hx: 8.5, hz: 3.4 });
+    this._obsAt = this.t; this._obs = o;
+    return o;
+  }
+  /** Push a point out of any obstacle; returns the outward normal of the last one it hit, or null. */
+  pushOut(p, pad = 0.8) {
+    let hit = null;
+    for (const ob of this.obstacles()) {
+      if (ob.r != null) {
+        const dx = p.x - ob.x, dz = p.z - ob.z, d = Math.hypot(dx, dz), R = ob.r + pad;
+        if (d < R) { const nx = d ? dx / d : 1, nz = d ? dz / d : 0; p.x = ob.x + nx * R; p.z = ob.z + nz * R; hit = { x: nx, z: nz }; }
+      } else {
+        const c = Math.cos(-ob.rot), s = Math.sin(-ob.rot), dx = p.x - ob.x, dz = p.z - ob.z;
+        let lx = dx * c + dz * s, lz = -dx * s + dz * c;
+        const ex = ob.hx + pad - Math.abs(lx), ez = ob.hz + pad - Math.abs(lz);
+        if (ex > 0 && ez > 0) {
+          let nlx = 0, nlz = 0;
+          if (ex < ez) { lx = Math.sign(lx || 1) * (ob.hx + pad); nlx = Math.sign(lx); } else { lz = Math.sign(lz || 1) * (ob.hz + pad); nlz = Math.sign(lz); }
+          const c2 = Math.cos(ob.rot), s2 = Math.sin(ob.rot);
+          p.x = ob.x + lx * c2 + lz * s2; p.z = ob.z - lx * s2 + lz * c2;
+          hit = { x: nlx * c2 + nlz * s2, z: -nlx * s2 + nlz * c2 };
+        }
+      }
+    }
+    return hit;
+  }
+  blocked(p, pad = 0.8) { const q = p.clone(); return !!this.pushOut(q, pad); }
+  /** Walk toward a target, sliding round anything in the way. Returns the distance still to go. */
+  walkTo(f, target, speed, dt) {
+    const p = f.position, d = new THREE.Vector3(target.x - p.x, 0, target.z - p.z), dist = d.length();
+    if (dist < 0.05) return 0;
+    d.multiplyScalar(1 / dist);
+    const step = Math.min(dist, speed * dt);
+    p.x += d.x * step; p.z += d.z * step;
+    const n = this.pushOut(p);
+    if (n) {
+      // slide along the obstacle, whichever way round is shorter
+      let tx = -n.z, tz = n.x; if (tx * d.x + tz * d.z < 0) { tx = -tx; tz = -tz; }
+      p.x += tx * step * 0.8; p.z += tz * step * 0.8; this.pushOut(p);
+      f.rotation.y = Math.atan2(tx * 0.6 + d.x * 0.4, tz * 0.6 + d.z * 0.4);
+    } else f.rotation.y = Math.atan2(d.x, d.z);
+    return Math.hypot(target.x - p.x, target.z - p.z);
+  }
+
   /** Where a customer was on the beach before they joined a queue: somewhere between the bar and the middle of the
    *  beach, never on the court or in the stands, never in the sea. */
   customerOrigin(bar) {
@@ -915,6 +975,8 @@ export class Beach {
     const keepX = COURT.hx + 9, keepZ = COURT.hz + 12;
     if (Math.abs(o.x) < keepX && Math.abs(o.z) < keepZ) o.x = Math.sign(o.x || p.x) * (keepX + Math.random() * 4);
     o.z = Math.max(SHORE + 4, Math.min(38, o.z));
+    if (this.blocked(o, 1.2) && (this._tries = (this._tries || 0) + 1) < 12) return this.customerOrigin(bar);
+    this._tries = 0; this.pushOut(o, 1.2);
     return o;
   }
   /** A cocktail in the bar's colour, held in the right hand. */
@@ -934,15 +996,16 @@ export class Beach {
     const u = f.userData;
     if (this.fleeing()) {
       // gulls or a storm: off the beach, fast
-      const away = new THREE.Vector3(Math.sign(f.position.x || 1) * 160, 0, 70).sub(f.position);
-      if (away.length() < 4) { this.scene.remove(f); return false; }
-      away.normalize(); f.position.addScaledVector(away, dt * 14); f.rotation.y = Math.atan2(away.x, away.z);
+      u.fleeTo ||= new THREE.Vector3(Math.sign(f.position.x || 1) * 160, 0, 70);
+      if (this.walkTo(f, u.fleeTo, 14, dt) < 4) { this.scene.remove(f); return false; }
       animateFigure(f, t, { walk: 1, arms: !u.drink, dt });
       if (u.drink) poseArms(f, [0.4, -1.0], [-0.1, 0.1], dt);
     } else {
-      const d = target.clone().sub(f.position), dist = d.length();
+      const dist = u.home ? 0 : Math.hypot(target.x - f.position.x, target.z - f.position.z);
       if (dist > 0.3) {
-        d.normalize(); f.position.addScaledVector(d, Math.min(dist, dt * speed)); f.rotation.y = Math.atan2(d.x, d.z);
+        const left = this.walkTo(f, target, speed, dt);
+        u.stuckFor = left > (u.lastLeft ?? 1e9) - 0.02 ? (u.stuckFor || 0) + dt : 0; u.lastLeft = left;
+        if (u.stuckFor > 1.2 && left < 5) u.home = true;          // close enough: someone's towel is in the way
         animateFigure(f, t, { walk: 1, arms: !u.drink, dt });
         if (u.drink) poseArms(f, [Math.sin(t * 9 + u.phase) * 0.4, -0.9], [-0.12, 0.2], dt);
       } else {
@@ -1035,6 +1098,7 @@ export class Beach {
   }
   stopDay() {
     this.stopParty();
+    if (this.scattered) this.restoreLife();
     for (const w of this.walkAways || []) this.scene.remove(w.f);
     this.walkAways = [];
     for (const bar of this.bars) if (bar) { for (const f of bar.leavers) this.scene.remove(f); bar.leavers = []; }
@@ -1164,14 +1228,45 @@ export class Beach {
   }
 
   /** Beachgoers and spectators come and go with the weather and the fixture; each pops in or out. */
+  /** Gulls or a storm: everyone on the beach gets up and runs for it. Towels, parasols and sandcastles stay put. */
+  scatterLife() {
+    this.scattered = true; this.runners = [];
+    for (const g of this.life) {
+      if (!g.visible || g.userData.vis < 0.5) continue;
+      const u = g.userData;
+      const people = u.kind === 'towel' ? [u.figure] : u.kind === 'castle' ? [u.kid] : u.kind === 'pair' || u.kind === 'frisbee' ? [u.pair.a, u.pair.b] : u.kind === 'walker' ? [u.walk.f] : [];
+      for (const f of people) {
+        const keep = { parent: f.parent, pos: f.position.clone(), rot: f.rotation.clone(), scale: f.scale.clone() };
+        this.scene.attach(f);                                   // keep where they are in the world
+        f.rotation.set(0, f.rotation.y, 0); f.position.y = 0;   // sunbathers sit up and stand
+        f.scale.setScalar(f.userData.baseScale * Math.max(0.6, g.scale.x));
+        const side = Math.sign(f.position.x || (Math.random() - 0.5));
+        this.runners.push({ f, keep, delay: Math.random() * 0.8, to: new THREE.Vector3(side * (150 + Math.random() * 30), 0, 50 + Math.random() * 30) });
+      }
+      if (u.kind === 'pair' || u.kind === 'frisbee') u.pair.ball.position.y = 0.3;   // the ball drops where it was
+    }
+  }
+  restoreLife() {
+    for (const r of this.runners || []) {
+      r.keep.parent.add(r.f); r.f.position.copy(r.keep.pos); r.f.rotation.copy(r.keep.rot); r.f.scale.copy(r.keep.scale); r.f.visible = true;
+    }
+    this.runners = []; this.scattered = false;
+  }
+  updateRunners(t, dt) {
+    for (const r of this.runners || []) {
+      if (!r.f.visible) continue;
+      if ((r.delay -= dt) > 0) { animateFigure(r.f, t, { cheer: 0.6, dt }); continue; }   // a startled jump first
+      if (this.walkTo(r.f, r.to, 15, dt) < 6) r.f.visible = false;
+      animateFigure(r.f, t, { walk: 1, dt });
+    }
+  }
+
   updatePeople(t, dt) {
     const { counts, stands } = this.crowdTargets();
     const partyClears = this.partyOn;
-    // when the beach empties (storm or gulls), people leave over a couple of seconds, not all at once
     const fleeing = this.fleeing();
-    if (fleeing && this.fleeStart == null) this.fleeStart = t;
-    if (!fleeing) this.fleeStart = null;
-    const leaving = fleeing ? (t - this.fleeStart) * 0.5 : null;
+    if (fleeing && !this.scattered) this.scatterLife();
+    if (this.scattered) this.updateRunners(t, dt);
     const match = !!this.fixture?.match || partyClears;
     // pick the first N of each kind by order, skipping spots the court (or the party) takes up
     const want = new Set();
@@ -1189,8 +1284,11 @@ export class Beach {
       return g.visible;
     };
     for (const g of this.life) {
-      if (!pop(g, want.has(g) || (leaving != null && g.userData.vis > 0 && g.userData.order > leaving))) continue;
       const u = g.userData;
+      if (this.scattered) {
+        // everyone has run off: towels, parasols and castles stay just as they were; swimmers carry on swimming
+        if (!g.visible || u.kind !== 'swimmer') continue;
+      } else if (!pop(g, want.has(g))) continue;
       if (u.kind === 'towel') { const f = u.figure; f.position.y = 0.85 + Math.sin(t * 1.5 + u.order * 9) * 0.03; }
       else if (u.kind === 'pair' || u.kind === 'frisbee') {
         const P = u.pair, period = P.type === 'bat' ? 1.1 : 1.7, ph = (t + P.phase) / period, leg = Math.floor(ph), f = ph - leg;
@@ -1225,12 +1323,12 @@ export class Beach {
       const u = f.userData, on = i < n || (storm && u.vis > 0);
       if (!pop(f, on && !(storm && u.fled))) return;
       if (storm) {
-        const away = new THREE.Vector3(Math.sign(u.home.x || 1) * 130, 0, 70);
-        const d = away.sub(f.position); const run = d.length() > 1;
-        if (run) { d.normalize(); f.position.addScaledVector(d, dt * 14); f.rotation.y = Math.atan2(d.x, d.z); } else u.fled = true;
+        u.fleeTo ||= new THREE.Vector3(Math.sign(u.home.x || 1) * 130, 0, 70);
+        const run = this.walkTo(f, u.fleeTo, 14, dt) > 1;
+        if (!run) u.fled = true;
         animateFigure(f, t, { walk: run ? 1 : 0, dt });
       } else {
-        u.fled = false;
+        u.fled = false; u.fleeTo = null;
         const d = u.home.clone().sub(f.position);
         if (d.length() > 0.3) { f.position.addScaledVector(d.normalize(), dt * 14); animateFigure(f, t, { walk: 1, dt }); f.rotation.y = Math.atan2(d.x, d.z); }
         else { f.lookAt(this.vb.ball.position.x, 0, this.vb.ball.position.z); animateFigure(f, t, { cheer: cheer * ((i % 3) ? 1 : 0.5), dt }); }
@@ -1264,7 +1362,7 @@ export class Beach {
         const d = target.sub(f.position); const dist = d.length();
         if (f.userData.pop === 0) f.position.copy(f.userData.origin);
         f.userData.pop = Math.min(1, f.userData.pop + dt * 2);
-        if (dist > 0.2) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 12)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); }
+        if (dist > 0.2) { this.walkTo(f, target.add(f.position), 12, dt); animateFigure(f, t, { walk: 1, dt }); }
         else { f.lookAt(bar.group.position.x, 0, bar.group.position.z); animateFigure(f, t, { bounce: 0.1, dt }); }
       });
       bar.leavers = bar.leavers.filter(f => this.stroll(f, f.userData.origin, t, dt));
@@ -1272,8 +1370,8 @@ export class Beach {
     }
     // customers who defected walk over and crowd round the van
     for (const f of this.defectors) {
-      const d = f.userData.van.spot.clone().sub(f.position), dist = d.length();
-      if (dist > 0.3) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 13)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); }
+      const dist = f.position.distanceTo(f.userData.van.spot);
+      if (dist > 0.3) { this.walkTo(f, f.userData.van.spot, 13, dt); animateFigure(f, t, { walk: 1, dt }); }
       else { f.lookAt(this.van.position.x, 0, this.van.position.z); animateFigure(f, t, { cheer: 0.3, dt }); }
     }
     // customers who reach the front and walk away: too dear, off to a cheaper bar, or sold out
@@ -1318,7 +1416,7 @@ export class Beach {
   }
 
   spawnWalkAway(bar, w, k = 0) {
-    const f = figure({ shirt: bar.colour, shorts: '#1f2937', scale: 0.9, eyes: false });
+    const f = figure({ shirt: SHIRTS[Math.floor(Math.random() * SHIRTS.length)], shorts: '#1f2937', scale: 0.9, eyes: false });
     const at = this.queueSpot(bar, k % 2); const side = new THREE.Vector3(-bar.front.z, 0, bar.front.x).multiplyScalar(k % 2 ? 2.2 : -2.2);
     f.position.set(at.x + side.x, 0, at.z + side.z);
     f.lookAt(bar.group.position.x, 0, bar.group.position.z);
@@ -1347,9 +1445,8 @@ export class Beach {
       return true;
     }
     if (o.target && !o.bought) {
-      const d = o.target.clone().sub(f.position);
-      if (d.length() > 0.6 && !this.fleeing()) {
-        d.normalize(); f.position.addScaledVector(d, dt * 10); f.rotation.y = Math.atan2(d.x, d.z);
+      if (f.position.distanceTo(o.target) > 0.6 && !this.fleeing() && (o.tWalk = (o.tWalk || 0) + dt) < 6) {
+        this.walkTo(f, o.target, 10, dt);
         animateFigure(f, t, { walk: 1, dt });
         return true;
       }

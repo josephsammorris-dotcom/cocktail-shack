@@ -32,6 +32,9 @@ export const C = {
   // attendance = (base + range × U) × (1 + perPlayer × (N − 1)); retuned from the handbook's 90 + 140U and 0.25
   // so sell-outs are rare: a typical bar sees 30–45 thirsty customers on a sunny league day
   crowdBase: 52, crowdRange: 28, crowdPerPlayer: 0.45,
+  // a beach party (the 'extra' event on a no-match day) packs the beach whatever the weather: people come for the
+  // party, so the weather's crowd × thirst counts as at least 0.9 (sunny is 1.1), and then the party adds 80%
+  party: { mult: 1.8, weatherFloor: 0.9 },
   // the season builds: week 1 has 70% of the crowd, rising 7.5 points a week to full strength by week 5
   seasonStart: 0.7, seasonStep: 0.075,
   maxPlayers: 4,
@@ -478,7 +481,8 @@ export function resolveDay(g, inject = {}) {
     if (r1 < 0.16) event = rngNext(g) < 0.5 ? 'van' : 'gulls';
     else if (rngNext(g) < 0.08) event = 'extra';
   }
-  const E = event ? EVENTS[event].mult : 1;
+  const isParty = event === 'extra' && !g.fixture?.match;
+  const E = !event ? 1 : isParty ? C.party.mult * Math.max(1, C.party.weatherFloor / (W.crowd * W.thirst)) : EVENTS[event].mult;
   const M = g.fixture?.crowd ?? 1;
   const A = attendance(U, N);
   const B = A * seasonFactor(g.week) * W.crowd * W.thirst * M;

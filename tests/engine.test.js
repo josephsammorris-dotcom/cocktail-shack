@@ -152,6 +152,16 @@ t('seagulls or a storm abandon a match; other days keep their score', () => {
   eq([fine.fixture.abandoned, fine.fixture.score.length], [false, 2]);
 });
 
+t('a beach party sells well even on a chilly day', () => {
+  const run = (weather, event) => { const g = soloGame({ week: 5, weather }); E.updatePlan(g, g.players[0], { drinks: 25, ads: 1, price: 15 }); return E.resolveDay(g, { U: 0.5, event }).results[0].demand; };
+  const quietChilly = run('cool', null), partyChilly = run('cool', 'extra'), quietSunny = run('sunny', null);
+  ok(partyChilly > quietSunny * 1.4, `chilly party ${partyChilly.toFixed(1)} vs ordinary sunny day ${quietSunny.toFixed(1)}`);
+  ok(partyChilly > quietChilly * 4, `chilly party ${partyChilly.toFixed(1)} vs ordinary chilly day ${quietChilly.toFixed(1)}`);
+  // on a match day the same event is a third set: the old 1.6
+  const g = soloGame({ week: 4, weather: 'cool' }); E.updatePlan(g, g.players[0], { drinks: 25, ads: 1, price: 15 });
+  eq(E.resolveDay(g, { U: 0.5, event: 'extra' }).E, 1.6);
+});
+
 t('walk-aways: sold out, too dear, and off to a cheaper rival', () => {
   const g = E.createGame(3);
   ['a', 'b'].forEach(id => E.addPlayer(g, { id, token: id, name: id }));
