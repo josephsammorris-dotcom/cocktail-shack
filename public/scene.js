@@ -320,7 +320,8 @@ export class Beach {
   }
 
   buildSand() {
-    const geo = new THREE.PlaneGeometry(420, 120, 140, 50); geo.rotateX(-Math.PI / 2); geo.translate(0, 0, 22);
+    // wide enough that the sand never runs out at the sides, even as the lobby camera swings round
+    const geo = new THREE.PlaneGeometry(1200, 120, 320, 50); geo.rotateX(-Math.PI / 2); geo.translate(0, 0, 22);
     const pos = geo.attributes.position, uv = geo.attributes.uv, col = [];
     const a = new THREE.Color('#ffe9c4'), b = new THREE.Color('#f3d8a4'), wet = new THREE.Color('#c9a56c');
     for (let i = 0; i < pos.count; i++) {
@@ -343,15 +344,16 @@ export class Beach {
   buildSea() {
     this.waterTex = waterTexture();
     // near sea: animated waves, from the shore out to z = −330
-    const geo = new THREE.PlaneGeometry(900, 300, 120, 48); geo.rotateX(-Math.PI / 2); geo.translate(0, -0.6, SHORE - 150);
+    const geo = new THREE.PlaneGeometry(2400, 300, 200, 48); geo.rotateX(-Math.PI / 2); geo.translate(0, -0.6, SHORE - 150);
     const uv = geo.attributes.uv, p = geo.attributes.position;
     for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / 40, p.getZ(i) / 40);
     this.seaGeo = geo; this.seaBase = Float32Array.from(geo.attributes.position.array);
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(p.count * 3), 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(p.count * 4), 4));   // RGBA: it fades out at the far edge
     this.seaMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap, map: this.waterTex, transparent: true, opacity: 0.97 });
     this.sea = new THREE.Mesh(geo, this.seaMat); this.sea.receiveShadow = true; this.scene.add(this.sea);
-    // far sea: flat, wide enough to fill every corner of the screen out to the horizon
-    const far = new THREE.PlaneGeometry(6000, 2400, 1, 1); far.rotateX(-Math.PI / 2); far.translate(0, -0.6, SHORE - 300 - 1200);
+    // far sea: flat, wide enough to fill every corner of the screen out to the horizon. It starts well inside the
+    // near sea and sits a little lower, so the two overlap and no sky can ever show through a seam between them.
+    const far = new THREE.PlaneGeometry(8000, 2800, 1, 1); far.rotateX(-Math.PI / 2); far.translate(0, -1.8, SHORE - 120 - 1400);
     const fuv = far.attributes.uv, fp = far.attributes.position;
     for (let i = 0; i < fp.count; i++) fuv.setXY(i, fp.getX(i) / 120, fp.getZ(i) / 60);
     this.farTex = this.waterTex.clone(); this.farTex.needsUpdate = true;
@@ -360,11 +362,11 @@ export class Beach {
     this.paintSea(LOOKS.sunny.sea);
     // foam line that laps in and out
     const foamTex = canvasTex(256, 32, (ctx, w, h) => { const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,.95)'); g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); });
-    this.foam = new THREE.Mesh(new THREE.PlaneGeometry(420, 2.6), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, depthWrite: false }));
+    this.foam = new THREE.Mesh(new THREE.PlaneGeometry(1200, 2.6), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, depthWrite: false }));
     this.foam.rotation.x = -Math.PI / 2; this.foam.position.set(0, -0.15, SHORE - 1); this.scene.add(this.foam);
     // three layers of rolling wave crests
     this.crests = [0, 1, 2].map(i => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(420, 1.2), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0.6, depthWrite: false }));
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1.2), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0.6, depthWrite: false }));
       m.rotation.x = -Math.PI / 2; m.userData.phase = i / 3; this.scene.add(m); return m;
     });
   }
@@ -374,7 +376,8 @@ export class Beach {
     for (let i = 0; i < pos.count; i++) {
       const z = this.seaBase[i * 3 + 2], f = Math.min(1, (SHORE - z) / 260);
       const c = f < 0.12 ? light.clone().lerp(mid, f / 0.12) : mid.clone().lerp(deep, Math.min(1, (f - 0.12) / 0.6));
-      col.setXYZ(i, c.r, c.g, c.b);
+      const edge = Math.min(1, (z - (SHORE - 300)) / 80);       // the last 80 units melt into the far sea
+      col.setXYZW(i, c.r, c.g, c.b, Math.max(0, edge));
     }
     col.needsUpdate = true;
     this.farSeaMat.color.copy(deep);
@@ -910,8 +913,8 @@ export class Beach {
     const pos = this.seaGeo.attributes.position, base = this.seaBase;
     for (let i = 0; i < pos.count; i++) {
       const x = base[i * 3], z = base[i * 3 + 2];
-      const near = Math.max(0, 1 - (SHORE - z) / 220);
-      pos.setY(i, base[i * 3 + 1] + (Math.sin(x * 0.05 + t * 0.9 + z * 0.12) * 0.35 + Math.sin(x * 0.11 - t * 1.3) * 0.18 + Math.sin(z * 0.2 + t * 1.7) * 0.22) * rough * (0.3 + near * 0.7));
+      const near = Math.max(0, 1 - (SHORE - z) / 220), edge = Math.min(1, (z - (SHORE - 300)) / 60);
+      pos.setY(i, base[i * 3 + 1] + (Math.sin(x * 0.05 + t * 0.9 + z * 0.12) * 0.35 + Math.sin(x * 0.11 - t * 1.3) * 0.18 + Math.sin(z * 0.2 + t * 1.7) * 0.22) * rough * (0.3 + near * 0.7) * edge);
     }
     pos.needsUpdate = true;
     this.waterTex.offset.set(t * 0.004 * slow, t * 0.012 * slow);
