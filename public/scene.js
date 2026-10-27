@@ -322,7 +322,7 @@ export class Beach {
     S.add(sun);
 
     this.buildSand(); this.buildSea(); this.buildSky(); this.buildProps();
-    this.buildLife(); this.buildStands(); this.buildRain(); this.buildEvents();
+    this.buildLife(); this.buildStands(); this.buildRain(); this.buildEvents(); this.buildParty();
     this.vb = new Volleyball(S, { toon, figure, animateFigure, poseArms, labelSprite, canvasTex });
   }
 
@@ -660,6 +660,113 @@ export class Beach {
     }
   }
 
+  // ---------------------------------------------------------------- the beach party
+  // On a no-match day the "extra" event is a beach party: a DJ booth goes up in the middle of the beach and a crowd
+  // streams in to dance.
+  buildParty() {
+    const g = this.party = new THREE.Group(); g.visible = false; g.position.set(0, 0, -11); this.scene.add(g);
+    const black = toon('#1f2937'), grey = toon('#6b7280'), wood = toon('#c98b4f');
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(18, 1, 8), wood); deck.position.y = 0.5; deck.castShadow = deck.receiveShadow = true; g.add(deck);
+    // the DJ's table with its neon front
+    const neon = canvasTex(512, 128, (ctx, w, h) => {
+      const gr = ctx.createLinearGradient(0, 0, w, 0); gr.addColorStop(0, '#ec4899'); gr.addColorStop(0.5, '#8b5cf6'); gr.addColorStop(1, '#06b6d4');
+      ctx.fillStyle = '#111827'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = gr; ctx.font = '900 70px Inter, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#f0abfc'; ctx.shadowBlur = 18; ctx.fillText('BEACH PARTY', w / 2, h / 2 + 4);
+    });
+    const table = new THREE.Mesh(new THREE.BoxGeometry(8, 2.6, 2.4), black); table.position.set(0, 2.3, 1); table.castShadow = true; g.add(table);
+    const front = new THREE.Mesh(new THREE.PlaneGeometry(7.6, 1.9), new THREE.MeshBasicMaterial({ map: neon })); front.position.set(0, 2.3, 2.22); g.add(front);
+    this.decks = [-2, 2].map(x => { const d = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.25, 20), toon('#111827')); d.position.set(x, 3.75, 1); const lbl = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.27, 12), toon(x < 0 ? '#f472b6' : '#22d3ee')); d.add(lbl); g.add(d); return d; });
+    // the DJ, with headphones
+    const dj = this.dj = figure({ shirt: '#f472b6', shorts: '#111827', scale: 1.05 });
+    dj.position.set(0, 1, -0.6);
+    const phones = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.14, 6, 16, Math.PI), black); phones.position.y = 4.3; dj.userData.torso.add(phones);
+    for (const sx of [-1, 1]) { const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.3, 10), black); cup.rotation.z = Math.PI / 2; cup.position.set(sx * 1.05, 4.2, 0); dj.userData.torso.add(cup); }
+    g.add(dj);
+    // speaker stacks that thump on the beat
+    this.speakers = [-7, 7].map(x => {
+      const st = new THREE.Group(); st.position.set(x, 1, 0.5);
+      for (const [y, sz] of [[1.6, 3.2], [4.4, 2.4]]) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(sz, sz * 0.9, 2.2), black); box.position.y = y; box.castShadow = true; st.add(box);
+        const cone = new THREE.Mesh(new THREE.CylinderGeometry(sz * 0.32, sz * 0.32, 0.15, 16), grey); cone.rotation.x = Math.PI / 2; cone.position.set(0, y, 1.15); st.add(cone); cone.userData.cone = true;
+      }
+      g.add(st); return st;
+    });
+    // posts with a string of coloured bulbs, and light beams sweeping the sky
+    for (const x of [-9, 9]) { const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 11, 6), toon('#e5e7eb')); pole.position.set(x, 5.5, -2.5); g.add(pole); }
+    this.bulbs = [];
+    const bulbCols = ['#f472b6', '#facc15', '#22d3ee', '#a3e635', '#fb923c', '#a78bfa'];
+    for (let i = 0; i < 22; i++) {
+      const x = -9 + i * (18 / 21), y = 10.6 - Math.sin((i / 21) * Math.PI) * 2;
+      const b = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6), new THREE.MeshBasicMaterial({ color: bulbCols[i % bulbCols.length] }));
+      b.position.set(x, y, -2.5); b.userData.col = new THREE.Color(bulbCols[i % bulbCols.length]); g.add(b); this.bulbs.push(b);
+    }
+    this.beams = ['#f472b6', '#22d3ee', '#a3e635', '#facc15'].map((c, i) => {
+      const geo = new THREE.ConeGeometry(2.6, 30, 16, 1, true); geo.translate(0, -15, 0); geo.rotateX(Math.PI);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      m.position.set(-6 + i * 4, 4, -1.5); g.add(m); return m;
+    });
+    // beach balls batted about over the crowd
+    this.partyBalls = [0, 1, 2].map(i => { const b = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 8), toon(['#f43f5e', '#facc15', '#38bdf8'][i])); b.visible = false; this.scene.add(b); return b; });
+    // the dancers: bright party clothes, waiting off stage
+    const shirts = ['#f472b6', '#22d3ee', '#a3e635', '#facc15', '#fb923c', '#a78bfa', '#ffffff', '#f87171'];
+    this.dancers = [];
+    for (let i = 0; i < 44; i++) {
+      const row = Math.floor(i / 11), col = i % 11;
+      const spot = new THREE.Vector3(-16 + col * 3.2 + (row % 2) * 1.6 + (Math.random() - 0.5), 0, -5 + row * 3.3 + (Math.random() - 0.5));
+      const f = figure({ shirt: shirts[i % shirts.length], shorts: ['#1e3a8a', '#111827', '#7c2d12'][i % 3], scale: 0.85, eyes: false });
+      const a = Math.random() * Math.PI * 2;
+      f.userData.spot = spot; f.userData.from = spot.clone().add(new THREE.Vector3(Math.cos(a) * 30, 0, Math.abs(Math.sin(a)) * 25));
+      f.userData.style = i % 4; f.userData.arrive = Math.random() * 2.5;
+      f.visible = false; this.scene.add(f); this.dancers.push(f);
+    }
+    this.partyOn = false;
+  }
+  startParty() {
+    if (this.partyOn) return;
+    this.partyOn = true; this.partyT = 0; this.party.visible = true; this.party.scale.setScalar(0.01);
+    for (const f of this.dancers) { f.position.copy(f.userData.from); f.visible = true; f.userData.there = false; }
+    this.partyBalls.forEach(b => (b.visible = true));
+  }
+  stopParty() {
+    this.partyOn = false; this.party.visible = false;
+    for (const f of this.dancers) f.visible = false;
+    this.partyBalls.forEach(b => (b.visible = false));
+  }
+  updateParty(t, dt) {
+    if (!this.partyOn) return;
+    const T = this.partyT += dt, beat = T * (124 / 60), ph = beat % 1, kick = Math.pow(1 - ph, 3);
+    this.party.scale.setScalar(Math.min(1.35, 0.01 + T * 3));          // a bit bigger than life, so it reads on the TV
+    this.decks.forEach((d, i) => (d.rotation.y += dt * (i ? 5 : 4)));
+    this.speakers.forEach(sp => sp.scale.set(1 + kick * 0.06, 1 + kick * 0.06, 1 + kick * 0.06));
+    this.bulbs.forEach((b, i) => { const on = (Math.floor(beat * 2) + i) % 3 !== 0; b.material.color.copy(b.userData.col).multiplyScalar(on ? 1.2 : 0.25); });
+    this.beams.forEach((m, i) => { m.rotation.z = Math.sin(T * 1.3 + i * 1.7) * 0.7; m.rotation.x = Math.cos(T * 1.1 + i) * 0.35; m.material.opacity = 0.1 + kick * 0.12; });
+    // the DJ: nodding along, one hand on the headphones, the other in the air on the drop
+    animateFigure(this.dj, t, { bounce: 0.18 + kick * 0.25, arms: false, dt });
+    poseArms(this.dj, [-2.6 + Math.sin(T * 2) * 0.3, Math.floor(beat / 8) % 2 ? -2.9 : -1.4], [-0.9, 0.3], dt, 10);
+    this.partyBalls.forEach((b, i) => {
+      const k = (T * 0.45 + i / 3) % 1, x0 = -14 + i * 9;
+      b.position.set(x0 + Math.sin(k * Math.PI * 2) * 6, 7 + Math.abs(Math.sin(k * Math.PI * 4)) * 5, -1 + i * 2.5); b.rotation.x += dt * 3;
+    });
+    // dancers stream in, then dance: four styles, all on the beat
+    for (const f of this.dancers) {
+      const u = f.userData;
+      if (T < u.arrive) continue;
+      const d = u.spot.clone().sub(f.position), dist = d.length();
+      if (!u.there && dist > 0.4) { d.normalize(); f.position.addScaledVector(d, Math.min(dist, dt * 11)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); continue; }
+      u.there = true;
+      const b = (beat + u.phase * 0.1) % 1, jump = u.style === 0 ? Math.abs(Math.sin(b * Math.PI)) * 1.2 : u.style === 2 ? Math.pow(1 - b, 2) * 0.6 : 0.15 * Math.abs(Math.sin(b * Math.PI * 2));
+      f.position.y = jump;
+      f.rotation.y = Math.PI + Math.sin(beat * Math.PI / 2 + u.phase) * (u.style === 1 ? 0.9 : 0.35);   // face the DJ, swaying
+      animateFigure(f, t, { bounce: 0.05, arms: false, dt });
+      const wave = Math.sin(beat * Math.PI + u.phase);
+      const arms = u.style === 0 ? [[-2.9, -2.9], [-0.3, 0.3]]                      // jumping, hands up
+        : u.style === 1 ? [[-1.5 + wave * 0.9, -1.5 - wave * 0.9], [-0.4, 0.4]]       // the swim
+        : u.style === 2 ? [[-2.8, -0.4], [-0.2 + wave * 0.3, 0.2]]                  // one fist pumping
+        : [[-2.5 - wave * 0.4, -2.5 + wave * 0.4], [-0.8 - wave * 0.3, 0.8 - wave * 0.3]];   // arms waving side to side
+      poseArms(f, arms[0], arms[1], dt, 12);
+    }
+  }
+
   // ---------------------------------------------------------------- bars
   setBars(bars) {
     const seen = new Set();
@@ -893,7 +1000,7 @@ export class Beach {
     return ev?.type === 'gulls' && d.now() - d.startAt >= ev.atMs;
   }
   crowdTargets() {
-    const L = LOOKS[this.weatherType], match = !!this.fixture?.match;
+    const L = LOOKS[this.weatherType], match = !!this.fixture?.match || this.partyOn;
     const storming = this.fleeing();
     const p = storming ? 0 : L.people;
     const counts = {
@@ -904,7 +1011,7 @@ export class Beach {
       swimmer: Math.round(16 * Math.min(1, p * 0.85)),
       walker: storming ? 0 : Math.round(8 * (this.weatherType === 'storm' ? 0.15 : this.weatherType === 'cool' ? 1 : this.weatherType === 'cloud' ? 0.8 : 0.4)),
     };
-    const stands = match ? Math.min(1, L.crowd * STAGE_CROWD[this.fixture.stage || 'league']) : 0;
+    const stands = this.fixture?.match ? Math.min(1, L.crowd * STAGE_CROWD[this.fixture.stage || 'league']) : 0;
     return { counts, stands: storming ? 0 : stands };
   }
 
@@ -927,6 +1034,7 @@ export class Beach {
     this.vb.startMatch(script.fixture);
   }
   stopDay() {
+    this.stopParty();
     for (const w of this.walkAways || []) this.scene.remove(w.f);
     this.walkAways = [];
     for (const bar of this.bars) if (bar) { for (const f of bar.leavers) this.scene.remove(f); bar.leavers = []; }
@@ -1036,6 +1144,7 @@ export class Beach {
 
     this.updateDay(t, dt);
     this.updatePeople(t, dt);
+    this.updateParty(t, dt);
     this.vb.update(t, dt, { storm: this.fleeing(), ms: this.day ? this.day.now() - this.day.startAt : 0 });
 
     // camera: gentle drift, slow orbit in the lobby, pull back for results, nudge toward events
@@ -1057,13 +1166,14 @@ export class Beach {
   /** Beachgoers and spectators come and go with the weather and the fixture; each pops in or out. */
   updatePeople(t, dt) {
     const { counts, stands } = this.crowdTargets();
+    const partyClears = this.partyOn;
     // when the beach empties (storm or gulls), people leave over a couple of seconds, not all at once
     const fleeing = this.fleeing();
     if (fleeing && this.fleeStart == null) this.fleeStart = t;
     if (!fleeing) this.fleeStart = null;
     const leaving = fleeing ? (t - this.fleeStart) * 0.5 : null;
-    const match = !!this.fixture?.match;
-    // pick the first N of each kind by order, skipping spots the court takes up on match days
+    const match = !!this.fixture?.match || partyClears;
+    // pick the first N of each kind by order, skipping spots the court (or the party) takes up
     const want = new Set();
     const byKind = {};
     for (const g of this.life) (byKind[g.userData.kind] ||= []).push(g);
@@ -1177,7 +1287,10 @@ export class Beach {
     if (!day) return;
     while (day.chimeIdx < day.chimes.length && st >= day.chimes[day.chimeIdx]) { day.chimeIdx++; day.hooks.onChime?.(); }
     if (ev && st >= ev.atMs) {
-      if (!day.eventFired) { day.eventFired = true; day.hooks.onEvent?.(ev); this.vb.onEvent(ev.type); }
+      if (!day.eventFired) {
+        day.eventFired = true; day.hooks.onEvent?.(ev); this.vb.onEvent(ev.type);
+        if (ev.type === 'extra' && !day.script.fixture.match) this.startParty();
+      }
       const et = (st - ev.atMs) / 1000;
       if (ev.type === 'van') {
         // drives in along the front of the beach and parks between the two front bars, hatch to the beach

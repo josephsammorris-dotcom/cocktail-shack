@@ -92,6 +92,33 @@ export class Sound {
     this.murmur = this.loop(900, 0);
   }
   setMurmur(level) { if (this.murmur) this.murmur.gain.setTargetAtTime(Math.min(0.12, level), this.ctx.currentTime, 0.4); }
+  /** Beach party: a 124 bpm loop (kick, hats, claps, a bassline and chord stabs), scheduled just ahead of time. */
+  party(on) {
+    if (!this.ctx) return;
+    if (!on) { clearInterval(this.partyTimer); this.partyTimer = null; return; }
+    if (this.partyTimer) return;
+    const beat = 60 / 124, A2 = 110, F2 = 87.31, C3 = 130.81, G2 = 98;
+    const roots = [A2, F2, C3, G2];
+    const chords = [[440, 523.25, 659.26], [349.23, 440, 523.25], [392, 523.25, 659.26], [392, 493.88, 587.33]];
+    let next = this.ctx.currentTime + 0.05, n = 0;
+    const kick = t => {
+      const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+      g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      o.connect(g); g.connect(this.dry); o.start(t); o.stop(t + 0.32);
+    };
+    this.partyTimer = setInterval(() => {
+      while (next < this.ctx.currentTime + 0.15) {
+        const at = next - this.ctx.currentTime, bar = Math.floor(n / 4) % 4, b = n % 4;
+        kick(next);
+        this.noise(at + beat / 2, 0.05, { gain: 0.14 });                                    // off-beat hat
+        if (b === 1 || b === 3) this.noise(at, 0.12, { hp: 1500, gain: 0.2 });               // clap
+        for (const h of [0, 0.5]) this.tone(roots[bar] * (h ? 2 : 1), at + h * beat, beat * 0.45, { type: 'sawtooth', gain: 0.16, echo: false });
+        if (b === 0 || b === 2) chords[bar].forEach(f => this.tone(f, at + beat * 0.5, beat * 0.35, { type: 'triangle', gain: 0.07 }));
+        next += beat; n++;
+      }
+    }, 40);
+  }
   rain(on) {
     if (!this.ctx) return;
     if (on && !this.rainNode) { this.rainNode = this.loop(800, 0); this.rainNode.gain.setTargetAtTime(0.14, this.ctx.currentTime, 0.5); }

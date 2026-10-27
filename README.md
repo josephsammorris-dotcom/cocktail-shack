@@ -55,6 +55,10 @@ Changes from the handbook:
   bar's badge on the TV, in the lobby, the results table and the final podium. Photos travel in their own `photos`
   message, so the frequent state updates stay small. Without a photo, the same circle shows the player's initials
   (from the optional "Your name" box, else the bar's name).
+- **Beach parties.** On a day with no match, the "extra" event is a beach party: a DJ booth with spinning decks,
+  thumping speakers, flashing bulbs and light beams goes up in the middle of the beach, a crowd streams in to dance, and
+  the TV plays a party loop. (On match days the same event is a third set.)
+- **The briefing is a slim, see-through strip along the bottom of the TV**, so the beach stays in view.
 - **Customers keep their cocktails.** Each customer walks in from a spot on the beach and, once served, strolls back
   there with the drink in hand and stays, sipping, until the end of the day (or until seagulls or a storm clear the beach).
 - The four bar positions and the camera are pulled in a little so every bar fits a 16:9 TV, and room codes are claimed

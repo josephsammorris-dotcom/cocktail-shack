@@ -89,18 +89,19 @@ const GULL_SVG = `<svg class="gull" viewBox="0 0 100 100" aria-hidden="true"><el
 
 function renderBriefing() {
   const f = S.fixture, c = S.costs, r = S.rollover;
-  const delta = (now, prev) => now > prev ? `<div class="s up">▲ up ${now - prev}p</div>` : `<div class="s">no change</div>`;
   const left = r?.left?.length ? r.left.map(x => `${esc(S.bars.find(b => b.slot === x.slot)?.bar || '')}: ${x.n} staff left`).join(' · ') : '';
   const changes = [r?.mixUp ? `Cocktails now ${c.mixCost}p` : '', r?.adUp ? `Ads now ${c.adCost}p` : '', left].filter(Boolean).join(' · ');
+  const costLine = (icon, now, prev, what) => `${icon} ${now}p ${what}${now > prev ? ` <span class="up" style="color:var(--bad)">▲${now - prev}p</span>` : ''}`;
   $('brief').innerHTML = `
     ${f?.big ? `<div class="bigmatch">🏆 ${esc(f.big)}! Expect a bigger crowd.</div>` : ''}
-    <div class="bcard">${GULL_SVG}<div class="k">Beach Weather</div><div class="big">${WEATHER_ICON[S.forecast]}</div><div class="v">${esc(S.forecastLabel)}</div><div class="s">Usually right… usually.</div></div>
-    ${f.match
-      ? `<div class="bcard"><div class="k">This Saturday</div><div class="big">🏐</div><div class="v">${esc(f.big || 'Beach Volleyball')}</div><div class="s">Home v ${esc(f.away)}</div><div class="s">${f.stage === 'final' ? 'The biggest crowd of the season' : f.stage === 'semi' ? 'A bigger crowd than usual' : 'League match: a normal crowd'}</div></div>`
-      : `<div class="bcard"><div class="k">This Saturday</div><div class="big">🏖️</div><div class="v">No match today</div><div class="s">A quiet beach: a smaller crowd</div></div>`}
-    <div class="bcard"><div class="k">Cost bulletin</div><div class="v" style="margin-top:.6em">🍹 ${c.mixCost}p a cocktail</div>${delta(c.mixCost, c.prevMixCost)}
-      <div class="v">📣 ${c.adCost}p an ad</div>${delta(c.adCost, c.prevAdCost)}<div class="s">Extra staff ${c.wage}p a day</div></div>
-    ${changes && S.week > 1 ? `<div class="roll">Rollover: ${changes}</div>` : ''}`;
+    <div class="bstrip">
+      <div class="bcard">${GULL_SVG}<div><div class="k">Beach Weather</div><div class="v">${WEATHER_ICON[S.forecast]} ${esc(S.forecastLabel)}</div><div class="s">Usually right… usually.</div></div></div>
+      ${f.match
+        ? `<div class="bcard"><div class="big">🏐</div><div><div class="k">This Saturday</div><div class="v">${esc(f.big || 'League match')}</div><div class="s">Home v ${esc(f.away)} · ${f.stage === 'final' ? 'biggest crowd of the season' : f.stage === 'semi' ? 'a bigger crowd' : 'a normal crowd'}</div></div></div>`
+        : `<div class="bcard"><div class="big">🏖️</div><div><div class="k">This Saturday</div><div class="v">No match today</div><div class="s">A quiet beach: a smaller crowd</div></div></div>`}
+      <div class="bcard"><div class="big">🧾</div><div><div class="k">Costs</div><div class="v" style="font-size:calc(var(--u)*1.6)">${costLine('🍹', c.mixCost, c.prevMixCost, 'a cocktail')}</div><div class="v" style="font-size:calc(var(--u)*1.6)">${costLine('📣', c.adCost, c.prevAdCost, 'an ad')}</div><div class="s">Extra staff ${c.wage}p a day</div></div></div>
+    </div>
+    ${changes && S.week > 1 ? `<div class="roll">Rollover: ${esc(changes)}</div>` : ''}`;
   show('brief', true);
 }
 
@@ -184,11 +185,11 @@ function onState(m) {
 function enterPhase() {
   const ph = S.phase;
   ['lobby', 'brief', 'results', 'finale'].forEach(id => show(id, false));
-  document.body.classList.toggle('card-up', ['briefing', 'results', 'finale'].includes(ph));
+  document.body.classList.toggle('card-up', ['results', 'finale'].includes(ph));
   $('clock').classList.add('hide');
   beach.mode = ph;
   beach.pullTarget = ph === 'results' || ph === 'finale' ? 1 : 0;
-  if (ph !== 'matchday') { beach.stopDay(); sound.rain(false); sound.setMurmur?.(0); }
+  if (ph !== 'matchday') { beach.stopDay(); sound.rain(false); sound.party(false); sound.setMurmur?.(0); }
   if (ph !== 'finale') stopConfetti();
 
   switch (ph) {
@@ -217,7 +218,7 @@ function enterPhase() {
         onEvent: ev => {
           if (ev.type === 'van') sound.jingle();
           if (ev.type === 'gulls') sound.gulls();
-          if (ev.type === 'extra') sound.cheer();
+          if (ev.type === 'extra') { sound.cheer(); if (!S.fixture?.match) sound.party(true); }
           caption(ev.banner);
         },
       });
