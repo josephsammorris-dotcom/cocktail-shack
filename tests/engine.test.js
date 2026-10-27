@@ -271,5 +271,19 @@ t('day script counters end on sold', () => {
   }
 });
 
+t('25 forecast record fills in as each day ends', () => {
+  const g = E.createGame(77, { weeks: 8 });
+  E.addPlayer(g, { id: 'a', token: 'a', name: '', bot: true });
+  E.startGame(g);
+  ok(E.forecastRecord(g).length === 0, 'empty before any day');
+  E.beginPlanning(g); E.finalisePlans(g); E.resolveDay(g);
+  ok(E.forecastRecord(g).length === 0, 'hidden while the day plays');
+  E.beginResults(g);
+  const r = E.forecastRecord(g);
+  ok(r.length === 1 && r[0].week === 1 && r[0].forecast === g.forecast && r[0].weather === g.weather, 'shown at results');
+  E.endWeek(g);
+  ok(E.forecastRecord(g).length === 1, 'kept into the next briefing');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

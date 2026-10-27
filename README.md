@@ -67,6 +67,10 @@ Changes from the handbook:
   customer of the coral bar red), and on chilly or stormy days the volleyball crowd wears bright jumpers rather than dark ones.
 - **The briefing is a slim, see-through strip along the bottom of the TV**, and the lobby (QR code, room code and bars)
   is a slim see-through panel down the left side, so the beach stays in view.
+- **Price signs.** Each bar's price is painted on a wooden sign on a stick beside the bar, turned towards the camera.
+- **Forecast record.** Once each day is over, a small card in the bottom-right corner of the TV shows every week so far:
+  what the forecast said, what the weather was, and a tick or cross. During the briefing the weather card shows the
+  same record as a row of ticks and crosses. (The room keeps a `wxLog`; `forecastRecord()` only shows a day after it ends.)
 - **How to play.** A **?** button in the phone's header (and a *How to play* button in the waiting room) opens the rules
   and the game's mechanics: costs, staff, weather, fixtures, price, adverts, surprises and loans.
 - **Customers keep their cocktails.** Each customer walks in from a spot on the beach and, once served, strolls back

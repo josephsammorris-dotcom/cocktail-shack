@@ -59,6 +59,30 @@ function bakeColour(geo, colour, matrix) {
 }
 const vcMat = side => toon('#ffffff', { vertexColors: true, side });
 /** Replace a group's plain-coloured child meshes with one vertex-coloured mesh per material side. */
+/** A price sign: a wooden board on a stick, with the price painted on a canvas texture. */
+function makePriceSign(colour) {
+  const g = new THREE.Group();
+  const wood = toon('#8b5a2b');
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 5.2, 8), wood); post.position.y = 2.6; post.castShadow = true;
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.8, 0.3), wood); frame.position.y = 5.6; frame.castShadow = true;
+  const tex = canvasTex(256, 160, () => {});
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(4.1, 2.5), new THREE.MeshBasicMaterial({ map: tex })); face.position.set(0, 5.6, 0.16);
+  g.add(post, frame, face);
+  g.userData.tex = tex;
+  paintPriceSign(g, 15, colour);
+  return g;
+}
+function paintPriceSign(sign, price, colour) {
+  const tex = sign.userData.tex, c = tex.userData.canvas, ctx = c.getContext('2d'), w = c.width, h = c.height;
+  ctx.fillStyle = '#fff6e0'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = colour; ctx.fillRect(0, 0, w, 40);
+  ctx.fillStyle = '#fff'; ctx.font = '900 30px Inter, system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('🍹 COCKTAILS', w / 2, 22);
+  ctx.fillStyle = '#123c4a'; ctx.font = `900 ${String(price).length > 2 ? 90 : 100}px Inter, system-ui`;
+  ctx.fillText(`${price}p`, w / 2, 104);
+  tex.needsUpdate = true;
+}
+
 function mergeStatic(group) {
   const bySide = new Map();
   for (const m of [...group.children]) {
@@ -830,9 +854,10 @@ export class Beach {
 
     // name badge floating above, in the player's colour, with the seat letter
     const badge = labelSprite(b.bar, { bg: b.colour, letter: LETTERS[b.slot], img: this.photoImgs?.[b.slot] || null, initials: b.initials || LETTERS[b.slot], scale: 0.04 }); badge.position.set(0, 16.5, 0); g.add(badge);
-    // price board on an easel in front (appears at the start of the day)
-    const price = labelSprite('15p', { bg: '#1f2937', fg: '#fde68a', size: 72, scale: 0.042 }); price.position.set(-6.2, 2.6, 5.4); price.visible = false; g.add(price);
-    const easel = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 4), toon('#8b5a2b')); easel.position.set(-6.2, 1.3, 5.4); easel.rotation.y = Math.PI / 4; easel.castShadow = true; g.add(easel);
+    // price sign: a painted board on a stick in front of the bar (appears at the start of the day, turned to the camera)
+    const price = makePriceSign(b.colour); price.scale.setScalar(1.35); price.userData.base = price.scale.clone();
+    // out to the side and towards the camera, whichever way the bar faces
+    price.position.set(Math.sign(x) * 8, 0, 4.5).applyAxisAngle(new THREE.Vector3(0, 1, 0), -g.rotation.y); price.visible = false; g.add(price);
 
     mergeStatic(g);
     this.scene.add(g);
@@ -920,6 +945,10 @@ export class Beach {
     }
     for (const p of this.palms) o.push({ x: p.position.x, z: p.position.z, r: 1.4 });
     for (const bar of this.bars) if (bar) o.push({ x: bar.group.position.x, z: bar.group.position.z, rot: bar.group.rotation.y, hx: 5.6, hz: 3.6 });
+    for (const bar of this.bars) if (bar?.price.visible) {
+      const r = bar.group.rotation.y, lx = bar.price.position.x, lz = bar.price.position.z;
+      o.push({ x: bar.group.position.x + lx * Math.cos(r) + lz * Math.sin(r), z: bar.group.position.z - lx * Math.sin(r) + lz * Math.cos(r), r: 0.7 });
+    }
     if (this.vb.group.visible) o.push({ x: 0, z: 0, rot: 0, hx: COURT.hx + 1, hz: COURT.hz + 1 });
     if (this.partyOn) o.push({ x: 0, z: this.party.position.z, rot: 0, hx: 12.5, hz: 5.8 });
     if (this.van.visible) o.push({ x: this.van.position.x + 1.5, z: this.van.position.z, rot: 0, hx: 8.5, hz: 3.4 });
@@ -1089,9 +1118,8 @@ export class Beach {
     for (const b of script.bars) {
       const bar = this.bars[b.slot]; if (!bar) continue;
       this.day.served[b.slot] = 0;
-      bar.group.remove(bar.price);
-      bar.price = labelSprite(`${b.price}p`, { bg: '#1f2937', fg: '#fde68a', size: 72, scale: 0.042 }); bar.price.position.set(-6.2, 2.6, 5.4);
-      bar.price.visible = false; bar.price.userData.pop = 0; bar.group.add(bar.price);
+      paintPriceSign(bar.price, b.price, bar.colour);
+      bar.price.visible = false; bar.price.userData.pop = 0;
     }
     this.setFixture(script.fixture);
     this.vb.startMatch(script.fixture);
@@ -1366,6 +1394,7 @@ export class Beach {
         else { f.lookAt(bar.group.position.x, 0, bar.group.position.z); animateFigure(f, t, { bounce: 0.1, dt }); }
       });
       bar.leavers = bar.leavers.filter(f => this.stroll(f, f.userData.origin, t, dt));
+      if (bar.price.visible) { bar.price.rotation.y = Math.atan2(this.camera.position.x - bar.group.position.x, this.camera.position.z - bar.group.position.z) - bar.group.rotation.y; }
       if (bar.price.visible) { bar.price.userData.pop = Math.min(1, (bar.price.userData.pop || 0) + dt * 3); const p = bar.price.userData.pop; const base = bar.price.userData.base ||= bar.price.scale.clone(); bar.price.scale.copy(base).multiplyScalar(p < 1 ? 1 + Math.sin(p * Math.PI) * 0.3 : 1); }
     }
     // customers who defected walk over and crowd round the van

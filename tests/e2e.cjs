@@ -77,7 +77,8 @@ async function until(page, fn, timeout = 30000) {
     if (w === 1) await phones[0].screenshot({ path: `${OUT}/phone-match.png` });
     await sleep(5000);
     await tv.screenshot({ path: `${OUT}/tv-match-w${w}-b.png` });
-    await until(tv, () => !document.getElementById('results').classList.contains('hide'), 60000);
+    // (slow software rendering can mean the results timer has already moved on to the next briefing)
+    await until(tv, () => !document.getElementById('results').classList.contains('hide') || !document.getElementById('brief').classList.contains('hide'), 60000);
     await sleep(1500);
     await tv.screenshot({ path: `${OUT}/tv-results-w${w}.png` });
     // check the counters agree with the results

@@ -211,6 +211,7 @@ export function createGame(seed, settings = {}) {
     players: [],
     day: null,            // the settled results and script of the current week
     rollover: null,       // what changed at the last rollover
+    wxLog: [],            // forecast against the real weather, one entry per day played
     gameNo: 1,
   };
 }
@@ -527,6 +528,7 @@ export function resolveDay(g, inject = {}) {
   });
 
   // seagulls or a storm on a match day: the match is abandoned
+  (g.wxLog ||= []).push({ week: g.week, forecast: g.forecast, weather: g.weather });
   g.fixture.abandoned = !!(g.fixture.match && (event === 'gulls' || event === 'storm'));
   const ev = event && EVENTS[event];
   const banner = !event ? null : event === 'extra' && !g.fixture.match ? ev.bannerNoMatch : g.fixture.abandoned ? ev.bannerMatch : ev.banner;
@@ -612,6 +614,12 @@ function buildScript(g, bars, results, event, banner, split, BE) {
     event: event ? { type: event, atMs: event === 'storm' ? 0 : 1700, durationMs: event === 'storm' ? durationMs : 6000, banner } : null,
     bars: out, totals,
   };
+}
+
+/** The forecast record, shown once each day is over (so a day in progress isn't given away). */
+export function forecastRecord(g) {
+  const done = g.phase === 'results' || g.phase === 'finale';
+  return (g.wxLog || []).filter(x => x.week < g.week || (done && x.week === g.week));
 }
 
 export function beginResults(g) { g.phase = 'results'; for (const p of g.players) p.ready = p.bot || p.status !== 'active'; }

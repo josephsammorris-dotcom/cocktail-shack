@@ -77,10 +77,22 @@ function renderLobby() {
       : `<div class="seat empty"><span class="l">${LETTER[i]}</span>Free</div>`;
   }).join('');
   const starter = S.bars.find(b => b.starter);
+  requestAnimationFrame(fitLobby);
   $('lobbyhint').innerHTML = S.bars.length
     ? `${starter ? `<b>${esc(starter.bar)}</b> can press Start on their phone, or press <span class="kbd">Enter</span> here.` : 'Press <span class="kbd">Enter</span> to start.'} <span class="kbd">Esc</span> for settings.`
     : `Waiting for the first bar to open… <span class="kbd">Esc</span> for settings and computer bars.`;
 }
+
+/** Keep the lobby panel inside the screen: shrink the web address to one line, then scale the panel to fit. */
+function fitLobby() {
+  const el = $('lobby'), url = $('joinurl');
+  url.style.fontSize = '1em';
+  for (let f = 1; f > 0.5 && url.scrollWidth > url.clientWidth + 1; f -= 0.04) url.style.fontSize = f + 'em';
+  el.style.setProperty('--fit', 1);
+  const h = el.offsetHeight, max = innerHeight * 0.9;
+  el.style.setProperty('--fit', h > max ? (max / h).toFixed(3) : 1);
+}
+addEventListener('resize', () => { if (S?.phase === 'lobby') fitLobby(); });
 
 const GULL_SVG = `<svg class="gull" viewBox="0 0 100 100" aria-hidden="true"><ellipse cx="50" cy="62" rx="30" ry="22" fill="#fff" stroke="#123c4a" stroke-width="3"/>
   <circle cx="58" cy="36" r="17" fill="#fff" stroke="#123c4a" stroke-width="3"/><circle cx="63" cy="33" r="3.5" fill="#123c4a"/>
@@ -95,7 +107,7 @@ function renderBriefing() {
   $('brief').innerHTML = `
     ${f?.big ? `<div class="bigmatch">🏆 ${esc(f.big)}! Expect a bigger crowd.</div>` : ''}
     <div class="bstrip">
-      <div class="bcard">${GULL_SVG}<div><div class="k">Beach Weather</div><div class="v">${WEATHER_ICON[S.forecast]} ${esc(S.forecastLabel)}</div><div class="s">Usually right… usually.</div></div></div>
+      <div class="bcard">${GULL_SVG}<div><div class="k">Beach Weather</div><div class="v">${WEATHER_ICON[S.forecast]} ${esc(S.forecastLabel)}</div>${wxDots()}</div></div>
       ${f.match
         ? `<div class="bcard"><div class="big">🏐</div><div><div class="k">This Saturday</div><div class="v">${esc(f.big || 'League match')}</div><div class="s">Home v ${esc(f.away)} · ${f.stage === 'final' ? 'biggest crowd of the season' : f.stage === 'semi' ? 'a bigger crowd' : 'a normal crowd'}</div></div></div>`
         : `<div class="bcard"><div class="big">🏖️</div><div><div class="k">This Saturday</div><div class="v">No match today</div><div class="s">A quiet beach: a smaller crowd</div></div></div>`}
@@ -179,7 +191,41 @@ function onState(m) {
   // lobby: a pop when a bar joins
   if (S.phase === 'lobby') { if (P && S.bars.length > P.bars.length) sound.blip(); renderLobby(); }
   topBadges();
+  renderWxRecord();
   if (menuOpen) renderMenu();
+}
+
+/** The briefing's weather card: the season so far as a row of ticks and crosses. */
+function wxDots() {
+  const log = S.wxLog || [];
+  if (!log.length) return `<div class="s">Usually right… usually.</div>`;
+  const right = log.filter(x => x.forecast === x.weather).length;
+  return `<div class="s">Right ${right} of ${log.length} so far</div><div class="dots">${log.map(x => `<i class="${x.forecast === x.weather ? 'ok' : 'bad'}">${x.forecast === x.weather ? '✓' : '✗'}</i>`).join('')}</div>`;
+}
+
+// forecast record: one column per week (forecast, real weather, tick or cross), filled in as each day ends
+let wxSeen = 0;
+function renderWxRecord() {
+  const el = $('wxrec');
+  // hidden during the briefing (the weather card carries the record then), and until the first day is over
+  const on = S && !['lobby', 'finale', 'briefing'].includes(S.phase) && S.wxLog?.length > 0;
+  el.classList.toggle('hide', !on);
+  if (!on) { wxSeen = 0; el.dataset.k = ''; return; }
+  const log = S.wxLog || [], right = log.filter(x => x.forecast === x.weather).length;
+  const key = JSON.stringify([log, S.weeks]);
+  if (el.dataset.k === key) return;
+  el.dataset.k = key;
+  const by = Object.fromEntries(log.map(x => [x.week, x]));
+  const cells = [];
+  for (let w = 1; w <= S.weeks; w++) {
+    const x = by[w];
+    if (!x) { cells.push(`<div class="c fut"><span class="n">${w}</span><span></span><span></span><span class="m"></span></div>`); continue; }
+    const ok = x.forecast === x.weather;
+    cells.push(`<div class="c ${ok ? 'ok' : 'bad'}${log.length > wxSeen && w === log.at(-1).week ? ' new' : ''}"><span class="n">${w}</span><span>${WEATHER_ICON[x.forecast]}</span><span>${WEATHER_ICON[x.weather]}</span><span class="m">${ok ? '✓' : '✗'}</span></div>`);
+  }
+  el.innerHTML = `<div class="t">Forecast record<b>${log.length ? `${right} of ${log.length} right` : 'no days yet'}</b></div>
+    <div class="g"><div class="lab"><span>Week</span><span>Said</span><span>Was</span><span></span></div>${cells.join('')}</div>`;
+  wxSeen = log.length;
 }
 
 function enterPhase() {
