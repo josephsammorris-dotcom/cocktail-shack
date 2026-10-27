@@ -1,5 +1,8 @@
 // TV host display (Handbook Section 13). Read-only: it shows the room and plays back the server's day script.
-import { Conn, money, esc, WEATHER_ICON, SPORT_ICON, FACE, LETTER } from '/net.js';
+import { Conn, money, esc, WEATHER_ICON, FACE, LETTER } from '/net.js';
+
+// "🏐 Beach Cup Final: Home v Pelican Key", or a quiet day with no match
+const fixtureText = f => !f ? '' : f.match ? `🏐 ${f.big || 'Beach Volleyball'}: Home v ${f.away}` : '🏖️ No match today';
 import { Beach } from '/scene.js';
 import { Sound } from '/audio.js';
 
@@ -45,7 +48,7 @@ function topBadges() {
   if (!S || S.phase === 'lobby') { $('tl').innerHTML = ''; $('tr').innerHTML = ''; return; }
   const f = S.fixture, c = S.costs;
   $('tl').innerHTML = S.phase === 'finale' ? `<div class="pillbox wk">Final standings</div>`
-    : `<div class="pillbox wk">Week ${S.week} of ${S.weeks}</div>${f ? `<div class="pillbox">${SPORT_ICON[f.sport]} ${esc(f.sportName)}: Home v ${esc(f.away)}${f.big ? ` · 🏆 ${esc(f.big)}` : ''}</div>` : ''}`;
+    : `<div class="pillbox wk">Week ${S.week} of ${S.weeks}</div>${f ? `<div class="pillbox">${esc(fixtureText(f))}</div>` : ''}`;
   const wx = S.weather && S.phase !== 'briefing' && S.phase !== 'planning' ? S.weather : S.forecast;
   const lbl = S.weather && S.phase !== 'briefing' && S.phase !== 'planning' ? S.weatherLabel : `Forecast: ${S.forecastLabel}`;
   const up = (a, b) => a > b ? ` <span class="up">▲</span>` : '';
@@ -86,7 +89,9 @@ function renderBriefing() {
   $('brief').innerHTML = `
     ${f?.big ? `<div class="bigmatch">🏆 ${esc(f.big)}! Expect a bigger crowd.</div>` : ''}
     <div class="bcard">${GULL_SVG}<div class="k">Beach Weather</div><div class="big">${WEATHER_ICON[S.forecast]}</div><div class="v">${esc(S.forecastLabel)}</div><div class="s">Usually right… usually.</div></div>
-    <div class="bcard"><div class="k">This Saturday</div><div class="big">${SPORT_ICON[f.sport]}</div><div class="v">${esc(f.sportName)}</div><div class="s">Home v ${esc(f.away)}</div></div>
+    ${f.match
+      ? `<div class="bcard"><div class="k">This Saturday</div><div class="big">🏐</div><div class="v">${esc(f.big || 'Beach Volleyball')}</div><div class="s">Home v ${esc(f.away)}</div><div class="s">${f.stage === 'final' ? 'The biggest crowd of the season' : f.stage === 'semi' ? 'A bigger crowd than usual' : 'League match: a normal crowd'}</div></div>`
+      : `<div class="bcard"><div class="k">This Saturday</div><div class="big">🏖️</div><div class="v">No match today</div><div class="s">A quiet beach: a smaller crowd</div></div>`}
     <div class="bcard"><div class="k">Cost bulletin</div><div class="v" style="margin-top:.6em">🍹 ${c.mixCost}p a cocktail</div>${delta(c.mixCost, c.prevMixCost)}
       <div class="v">📣 ${c.adCost}p an ad</div>${delta(c.adCost, c.prevAdCost)}<div class="s">Extra staff ${c.wage}p a day</div></div>
     ${changes && S.week > 1 ? `<div class="roll">Rollover: ${changes}</div>` : ''}`;
@@ -180,14 +185,14 @@ function enterPhase() {
 
   switch (ph) {
     case 'lobby':
-      beach.setWeather('sunny'); beach.hidePrices();
+      beach.setWeather('sunny'); beach.setFixture(null); beach.hidePrices();
       caption('');
       break;
     case 'briefing':
       beach.setWeather(S.forecast); beach.setFixture(S.fixture); beach.hidePrices();
       if (S.week === 1) sound.riff(); else sound.riff(7);
       renderBriefing();
-      caption(`Week ${S.week}: ${S.fixture.sportName}, Home v ${S.fixture.away}. The Beach Weather says ${S.forecastLabel.toLowerCase()}.${S.fixture.big ? ' Big Match week! Expect a bigger crowd.' : ''}`);
+      caption(`Week ${S.week}: ${S.fixture.match ? `${S.fixture.big || 'Beach Volleyball'}, Home v ${S.fixture.away}` : 'no match today, just a day on the beach'}. The Beach Weather says ${S.forecastLabel.toLowerCase()}.${S.fixture.big ? ' Big Match week! Expect a bigger crowd.' : ''}`);
       break;
     case 'planning':
       beach.setWeather(S.forecast); beach.setFixture(S.fixture);
@@ -196,8 +201,7 @@ function enterPhase() {
       break;
     case 'matchday': {
       if (!S.script) break;
-      beach.setFixture(S.script.fixture);
-      beach.sport.onScore = () => sound.cheer();
+      beach.vb.onScore = () => sound.cheer();
       lastSaleTimes = [];
       beach.playDay(S.script, S.startAt, () => conn.now(), {
         onSale: () => { lastSaleTimes.push(performance.now()); },
@@ -286,9 +290,6 @@ function frame() {
   drawConfetti();
   requestAnimationFrame(frame);
 }
-// keep results counters showing after the day ends
-const _stop = beach.stopDay.bind(beach);
-beach.stopDay = () => { if (S?.phase === 'results') { beach.sport.idle(); beach.van.visible = false; beach.gulls.forEach(g => g.visible = false); return; } _stop(); };
 requestAnimationFrame(frame);
 
 beach.onThunder = () => {

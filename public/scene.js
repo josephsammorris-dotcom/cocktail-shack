@@ -1,21 +1,25 @@
 // The TV's beach diorama (Handbook Section 13), in three.js. Read-only: it draws what the server says.
 import * as THREE from 'three';
-import { Sport } from '/sports.js';
+import { Volleyball, COURT } from '/volleyball.js';
+import { mergeGeometries } from '/vendor/BufferGeometryUtils.js';
 
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 // the prototype used (±48, 28) and (±48, −26); pulled in a little so every bar fits a 16:9 TV with the camera below
 export const BAR_POS = [[-41, 21], [41, 21], [-45, -22], [45, -22]];
 const PATTERNS = ['stripes', 'dots', 'zigzag', 'checks'];
 const LETTERS = ['A', 'B', 'C', 'D'];
+const SHORE = -31;                       // where sand meets sea
 
-// weather looks (from the modern skin)
+// weather looks (from the modern skin). `people` scales how busy the beach is; `crowd` is the match crowd factor.
 const LOOKS = {
-  sunny:    { top: '#7dd8f7', bot: '#cdeffb', sun: 1, sunCol: '#fff6c8', sunSize: 26, clouds: 0.15, cloudCol: '#ffffff', rain: 0, light: 1.25, hemi: 1.0, sea: ['#59c8dd', '#0aa7c2', '#0b6e8e'], sand: '#ffffff', warm: 0 },
-  scorcher: { top: '#ffb26b', bot: '#ffe3b3', sun: 1, sunCol: '#ffb347', sunSize: 40, clouds: 0, cloudCol: '#fff3e0', rain: 0, light: 1.45, hemi: 1.05, sea: ['#4fd1d9', '#0796b8', '#075f86'], sand: '#fff1dc', warm: 1 },
-  cloud:    { top: '#a8bfcc', bot: '#dde9ef', sun: 0, sunCol: '#ffffff', sunSize: 20, clouds: 1, cloudCol: '#eef2f5', rain: 0, light: 0.7, hemi: 1.05, sea: ['#6fb6c4', '#2f8aa0', '#215f73'], sand: '#e9eef0', warm: 0 },
-  cool:     { top: '#bcd9ea', bot: '#ecf6fb', sun: 0, sunCol: '#ffffff', sunSize: 20, clouds: 0.8, cloudCol: '#f7fbfd', rain: 0, light: 0.8, hemi: 1.1, sea: ['#7cc3d3', '#3a95ab', '#286c80'], sand: '#eef6fa', warm: 0, whitecaps: 1 },
-  storm:    { top: '#3a4a63', bot: '#6e8098', sun: 0, sunCol: '#ffffff', sunSize: 20, clouds: 1, cloudCol: '#5b6678', rain: 1, light: 0.35, hemi: 0.55, sea: ['#3d6475', '#1f4556', '#132f3d'], sand: '#9aa6b5', warm: 0, whitecaps: 1 },
+  sunny:    { top: '#5ec4ef', bot: '#cdeffb', sun: 1, sunCol: '#fff6c8', sunSize: 34, clouds: 0.25, cloudCol: '#ffffff', rain: 0, light: 1.25, hemi: 1.0, sea: ['#5fd0df', '#11a9c4', '#0a6f90'], warm: 0, people: 1, crowd: 1 },
+  scorcher: { top: '#ff9f55', bot: '#ffe3b3', sun: 1, sunCol: '#ffb347', sunSize: 52, clouds: 0.05, cloudCol: '#fff3e0', rain: 0, light: 1.45, hemi: 1.05, sea: ['#58d8dd', '#0a9cbc', '#086389'], warm: 1, people: 1.2, crowd: 1 },
+  cloud:    { top: '#93adbc', bot: '#dde9ef', sun: 0, sunCol: '#ffffff', sunSize: 24, clouds: 1, cloudCol: '#eef2f5', rain: 0, light: 0.7, hemi: 1.05, sea: ['#78bcc8', '#3c8fa4', '#245f74'], warm: 0, people: 0.45, crowd: 0.8 },
+  cool:     { top: '#a9cde3', bot: '#ecf6fb', sun: 0, sunCol: '#ffffff', sunSize: 24, clouds: 0.85, cloudCol: '#f7fbfd', rain: 0, light: 0.8, hemi: 1.1, sea: ['#86c8d6', '#4198ad', '#2b6c80'], warm: 0, whitecaps: 1, people: 0.2, crowd: 0.7 },
+  storm:    { top: '#2f3d55', bot: '#6e8098', sun: 0, sunCol: '#ffffff', sunSize: 24, clouds: 1, cloudCol: '#566175', rain: 1, light: 0.35, hemi: 0.55, sea: ['#44707f', '#22495a', '#14303d'], warm: 0, whitecaps: 1, people: 0, crowd: 0.25 },
 };
+// how full the stands are for each kind of fixture
+const STAGE_CROWD = { league: 0.55, semi: 0.78, final: 1 };
 
 // ------------------------------------------------------------------ shared materials and textures
 const gradientMap = (() => {
@@ -30,16 +34,52 @@ export function toon(color, opts = {}) {
   matCache.set(key, m);
   return m;
 }
-function canvasTex(w, h, draw) {
+export function canvasTex(w, h, draw) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   draw(c.getContext('2d'), w, h);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   t.userData.canvas = c;
   return t;
 }
 function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
-function labelSprite(text, { bg = '#123c4a', fg = '#fff', font = 800, size = 64, pad = 28, letter = null, scale = 0.05 } = {}) {
+// ------------------------------------------------------------------ draw-call savers
+// Many small static parts become one mesh with the colours baked into its vertices, so a laptop's integrated
+// graphics can keep 60 fps with a full beach.
+const _c = new THREE.Color();
+function bakeColour(geo, colour, matrix) {
+  const g = (geo.index ? geo.toNonIndexed() : geo.clone());
+  if (matrix) g.applyMatrix4(matrix);
+  for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+  _c.set(colour).convertSRGBToLinear();
+  const n = g.attributes.position.count, col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+const vcMat = side => toon('#ffffff', { vertexColors: true, side });
+/** Replace a group's plain-coloured child meshes with one vertex-coloured mesh per material side. */
+function mergeStatic(group) {
+  const bySide = new Map();
+  for (const m of [...group.children]) {
+    const mat = m.material;
+    if (!m.isMesh || !mat?.isMeshToonMaterial || mat.map || mat.transparent || mat.vertexColors || m.userData.keep) continue;
+    m.updateMatrix();
+    const list = bySide.get(mat.side) || []; list.push({ geo: bakeColour(m.geometry, '#' + mat.color.getHexString(), m.matrix), cast: m.castShadow });
+    bySide.set(mat.side, list);
+    group.remove(m);
+  }
+  for (const [sideV, list] of bySide) {
+    const mesh = new THREE.Mesh(mergeGeometries(list.map(x => x.geo)), vcMat(sideV));
+    mesh.castShadow = list.some(x => x.cast); mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  return group;
+}
+// a small seeded random for textures and layout, so the beach looks the same every time
+function seeded(seed) { let a = seed | 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+export function labelSprite(text, { bg = '#123c4a', fg = '#fff', font = 800, size = 64, pad = 28, letter = null, scale = 0.05 } = {}) {
   const meas = document.createElement('canvas').getContext('2d');
   meas.font = `${font} ${size}px Inter, system-ui, sans-serif`;
   const tw = meas.measureText(text).width + (letter ? size * 1.2 : 0);
@@ -70,48 +110,156 @@ function patternTexture(pattern, colour) {
   });
 }
 
+// Sand: fine grain, a few shell fragments and soft wind ripples. Tiles seamlessly.
+function sandTexture() {
+  const t = canvasTex(512, 512, (ctx, w, h) => {
+    const r = seeded(11);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+    // wind ripples: wavy bands, drawn three times across the seam so they tile
+    for (let band = 0; band < 14; band++) {
+      const y0 = (band / 14) * h, amp = 6 + r() * 6, ph = r() * 6;
+      ctx.strokeStyle = `rgba(190,150,90,${0.07 + r() * 0.05})`; ctx.lineWidth = 5 + r() * 4;
+      for (const dy of [-h, 0, h]) {
+        ctx.beginPath();
+        for (let x = 0; x <= w; x += 8) ctx.lineTo(x, y0 + dy + Math.sin((x / w) * Math.PI * 4 + ph) * amp);
+        ctx.stroke();
+      }
+    }
+    // grain
+    const img = ctx.getImageData(0, 0, w, h), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (r() - 0.5) * 34 + (r() < 0.02 ? -40 : 0) + (r() < 0.015 ? 30 : 0);
+      d[i] = Math.max(0, Math.min(255, d[i] + n)); d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n * 0.95)); d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n * 0.8));
+    }
+    ctx.putImageData(img, 0, 0);
+    // shell bits and pebbles
+    for (let i = 0; i < 60; i++) {
+      const x = r() * w, y = r() * h, s = 1.5 + r() * 3;
+      ctx.fillStyle = r() < 0.5 ? 'rgba(255,245,235,.9)' : 'rgba(170,135,95,.55)';
+      ctx.beginPath(); ctx.ellipse(x, y, s, s * 0.7, r() * 3, 0, 7); ctx.fill();
+    }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+// Water: soft light patches and short glinting crests. Mostly white so it tints the sea's own colours.
+function waterTexture() {
+  const t = canvasTex(512, 512, (ctx, w, h) => {
+    const r = seeded(23);
+    ctx.fillStyle = '#e4eef2'; ctx.fillRect(0, 0, w, h);
+    const blob = (x, y, rx, ry, a) => { for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) { const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, rx); g.addColorStop(0, `rgba(255,255,255,${a})`); g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x + dx, y + dy, rx, ry, 0, 0, 7); ctx.fill(); } };
+    ctx.fillStyle = '#cfdfe6'; ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 40; i++) blob(r() * w, r() * h, 30 + r() * 60, 10 + r() * 20, 0.35 + r() * 0.25);
+    // long darker swell troughs
+    for (let i = 0; i < 30; i++) { const x = r() * w, y = r() * h; for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) { ctx.fillStyle = 'rgba(120,155,175,.45)'; ctx.beginPath(); ctx.ellipse(x + dx, y + dy, 50 + r() * 50, 5 + r() * 4, 0, 0, 7); ctx.fill(); } }
+    // glints: short curved white strokes
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 140; i++) {
+      const x = r() * w, y = r() * h, len = 8 + r() * 22;
+      ctx.strokeStyle = `rgba(255,255,255,${0.55 + r() * 0.45})`; ctx.lineWidth = 1.5 + r() * 2.5;
+      for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) { ctx.beginPath(); ctx.moveTo(x + dx - len / 2, y + dy); ctx.quadraticCurveTo(x + dx, y + dy - 4, x + dx + len / 2, y + dy); ctx.stroke(); }
+    }
+  });
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
 // ------------------------------------------------------------------ characters
 const G = {
   body: new THREE.CapsuleGeometry(0.85, 1.2, 4, 10),
   head: new THREE.SphereGeometry(1.0, 16, 12),
   eye: new THREE.SphereGeometry(0.13, 6, 6),
   leg: new THREE.CapsuleGeometry(0.32, 0.7, 3, 6),
+  arm: new THREE.CapsuleGeometry(0.24, 1.15, 3, 6).translate(0, -0.78, 0),
   hair: new THREE.SphereGeometry(1.03, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.45),
 };
 const SKINS = ['#f2c7a5', '#e0a982', '#c68a5e', '#8d5a3b', '#f7d8c0', '#b07a52'];
 const HAIRS = ['#3b2a20', '#6b4423', '#d9a441', '#1f1f1f', '#a0522d', '#e8d39b'];
-const SHIRTS = ['#fef3c7', '#bae6fd', '#fecaca', '#d9f99d', '#e9d5ff', '#fde68a', '#a7f3d0', '#fbcfe8', '#ffffff'];
+export const SHIRTS = ['#fef3c7', '#bae6fd', '#fecaca', '#d9f99d', '#e9d5ff', '#fde68a', '#a7f3d0', '#fbcfe8', '#ffffff', '#fdba74', '#93c5fd'];
 const JUMPERS = ['#64748b', '#475569', '#7c2d12', '#1e3a8a', '#365314', '#581c87'];
 const eyeMat = new THREE.MeshBasicMaterial({ color: '#1b2430' });
 
-export function figure({ shirt = '#ffffff', shorts = '#123c4a', skin, hair, eyes = true, scale = 1, rnd = Math.random } = {}) {
+const simpleGeoCache = new Map();
+function simpleBodyGeo(shirt, shorts, skin, hair, eyes) {
+  const key = [shirt, shorts, skin, hair, eyes].join('|');
+  if (simpleGeoCache.has(key)) return simpleGeoCache.get(key);
+  const M = (x, y, z, rx = 0) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, 0)), new THREE.Vector3(1, 1, 1));
+  const parts = [bakeColour(G.leg, shorts, M(-0.42, 0.75, 0)), bakeColour(G.leg, shorts, M(0.42, 0.75, 0)),
+    bakeColour(G.body, shirt, M(0, 2.25, 0)), bakeColour(G.head, skin, M(0, 4.15, 0)), bakeColour(G.hair, hair, M(0, 4.2, 0, -0.25))];
+  if (eyes) parts.push(bakeColour(G.eye, '#1b2430', M(-0.36, 4.25, 0.9)), bakeColour(G.eye, '#1b2430', M(0.36, 4.25, 0.9)));
+  const geo = mergeGeometries(parts);
+  simpleGeoCache.set(key, geo);
+  return geo;
+}
+
+/** A chunky cartoon person. Arms hang from shoulder pivots: rotation.x < 0 swings a hand forward and up.
+ *  `detail: 'simple'` (the default) bakes legs, body and head into one mesh: three draw calls a person.
+ *  `detail: 'full'` keeps separate legs that swing, for the volleyball players. */
+export function figure({ shirt = '#ffffff', shorts = '#123c4a', skin, hair, eyes = true, arms = true, scale = 1, shadow = true, detail = 'simple', rnd = Math.random } = {}) {
   const g = new THREE.Group();
   skin ||= SKINS[Math.floor(rnd() * SKINS.length)];
   hair ||= HAIRS[Math.floor(rnd() * HAIRS.length)];
+  if (detail === 'simple') {
+    const torso = new THREE.Group();
+    const body = new THREE.Mesh(simpleBodyGeo(shirt, shorts, skin, hair, eyes), vcMat(THREE.FrontSide)); body.castShadow = shadow;
+    torso.add(body);
+    const armPivots = [];
+    if (arms) for (const s of [-1, 1]) {
+      const pivot = new THREE.Group(); pivot.position.set(1.0 * s, 3.05, 0); pivot.rotation.z = 0.12 * s;
+      pivot.add(new THREE.Mesh(G.arm, toon(skin))); torso.add(pivot); armPivots.push(pivot);
+    }
+    g.add(torso);
+    g.scale.setScalar(scale);
+    g.userData = { simple: true, body, legs: new THREE.Group(), torso, arms: armPivots, phase: rnd() * 10, baseScale: scale, armX: [0, 0], armZ: [0, 0],
+      setShirt: c => { body.geometry = simpleBodyGeo(c, shorts, skin, hair, eyes); } };
+    return g;
+  }
   const legs = new THREE.Group();
-  for (const s of [-1, 1]) { const l = new THREE.Mesh(G.leg, toon(shorts)); l.position.set(0.42 * s, 0.75, 0); l.castShadow = true; legs.add(l); }
-  const body = new THREE.Mesh(G.body, toon(shirt)); body.position.y = 2.25; body.castShadow = true;
-  const head = new THREE.Mesh(G.head, toon(skin)); head.position.y = 4.15; head.castShadow = true;
+  for (const s of [-1, 1]) { const l = new THREE.Mesh(G.leg, toon(shorts)); l.position.set(0.42 * s, 0.75, 0); legs.add(l); }
+  const torso = new THREE.Group();                 // everything above the hips, so it can bob and lean together
+  const body = new THREE.Mesh(G.body, toon(shirt)); body.position.y = 2.25; body.castShadow = shadow;
+  const head = new THREE.Mesh(G.head, toon(skin)); head.position.y = 4.15; head.castShadow = shadow;
   const hairM = new THREE.Mesh(G.hair, toon(hair)); hairM.position.y = 4.2; hairM.rotation.x = -0.25;
-  g.add(legs, body, head, hairM);
-  const eyeMeshes = [];
-  if (eyes) for (const s of [-1, 1]) { const e = new THREE.Mesh(G.eye, eyeMat); e.position.set(0.36 * s, 4.25, 0.9); g.add(e); eyeMeshes.push(e); }
+  torso.add(body, head, hairM);
+  const armPivots = [];
+  if (arms) for (const s of [-1, 1]) {
+    const pivot = new THREE.Group(); pivot.position.set(1.0 * s, 3.05, 0); pivot.rotation.z = 0.12 * s;
+    pivot.add(new THREE.Mesh(G.arm, toon(skin))); torso.add(pivot); armPivots.push(pivot);
+  }
+  if (eyes) for (const s of [-1, 1]) { const e = new THREE.Mesh(G.eye, eyeMat); e.position.set(0.36 * s, 4.25, 0.9); torso.add(e); }
+  g.add(legs, torso);
   g.scale.setScalar(scale);
-  g.userData = { body, head, legs, hair: hairM, eyes: eyeMeshes, phase: rnd() * 10, baseScale: scale, shirtMesh: body };
+  g.userData = { body, head, legs, torso, arms: armPivots, phase: rnd() * 10, baseScale: scale, armX: [0, 0], armZ: [0, 0], setShirt: c => { body.material = toon(c); } };
   return g;
 }
-export function animateFigure(f, t, { walk = 0, bounce = 0.06, cheer = 0 } = {}) {
+/** Walk, bounce and cheer. Arms follow unless `arms: false` (the volleyball module poses its own). */
+export function animateFigure(f, t, { walk = 0, bounce = 0.06, cheer = 0, arms = true, dt = 0.016 } = {}) {
   const u = f.userData, p = t * (walk ? 9 : 2.2) + u.phase;
-  const b = Math.abs(Math.sin(p)) * (walk ? 0.35 : bounce) + cheer * Math.abs(Math.sin(t * 8 + u.phase)) * 1.2;
-  u.body.position.y = 2.25 + b; u.head.position.y = 4.15 + b * 1.05;
-  u.hair.position.y = 4.2 + b * 1.05;
-  for (const e of u.eyes) e.position.y = 4.25 + b * 1.05;
-  // squash and stretch
-  const sq = 1 + Math.sin(p * 2) * (walk ? 0.05 : 0.02);
+  const b = Math.abs(Math.sin(p)) * (walk ? 0.35 : bounce) + cheer * Math.abs(Math.sin(t * 8 + u.phase)) * 1.0;
+  u.torso.position.y = b;
+  const sq = 1 + Math.sin(p * 2) * (walk ? 0.05 : 0.02) * (u.simple ? 0.5 : 1);
   u.body.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
-  if (walk) { u.legs.children[0].rotation.x = Math.sin(p) * 0.6; u.legs.children[1].rotation.x = -Math.sin(p) * 0.6; }
-  else { u.legs.children[0].rotation.x = 0; u.legs.children[1].rotation.x = 0; }
+  if (u.legs.children.length === 2) {
+    u.legs.children[0].rotation.x = walk ? Math.sin(p) * 0.6 : 0;
+    u.legs.children[1].rotation.x = walk ? -Math.sin(p) * 0.6 : 0;
+  } else if (walk) u.torso.rotation.z = Math.sin(p) * 0.06;     // a waddle for the simple figures
+  if (arms && u.arms.length) {
+    let ax, az;
+    if (cheer > 0.2) { ax = [-2.7 + Math.sin(t * 9 + u.phase) * 0.25, -2.7 - Math.sin(t * 9 + u.phase) * 0.25]; az = [-0.35, 0.35]; }
+    else if (walk) { ax = [-Math.sin(p) * 0.55, Math.sin(p) * 0.55]; az = [-0.12, 0.12]; }
+    else { ax = [Math.sin(t * 1.3 + u.phase) * 0.06, -Math.sin(t * 1.3 + u.phase) * 0.06]; az = [-0.12, 0.12]; }
+    poseArms(f, ax, az, dt, 12);
+  }
 }
+export function poseArms(f, ax, az, dt, rate = 14) {
+  const u = f.userData, k = 1 - Math.exp(-dt * rate);
+  for (let i = 0; i < u.arms.length; i++) {
+    u.armX[i] += (ax[i] - u.armX[i]) * k; u.armZ[i] += (az[i] - u.armZ[i]) * k;
+    u.arms[i].rotation.x = u.armX[i]; u.arms[i].rotation.z = u.armZ[i];
+  }
+}
+const easeOutBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
 
 // ------------------------------------------------------------------ the scene
 export class Beach {
@@ -122,17 +270,19 @@ export class Beach {
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog('#cdeffb', 160, 330);
-    this.camera = new THREE.PerspectiveCamera(48, 16 / 9, 1, 600);
-    this.camBase = new THREE.Vector3(0, 50, 76);     // handbook reference (0, 44, 68); raised to fit all four bars
-    this.lookBase = new THREE.Vector3(0, 0, -4);
+    this.scene.fog = new THREE.Fog('#cdeffb', 260, 1500);
+    this.camera = new THREE.PerspectiveCamera(50, 16 / 9, 1, 2600);
+    // handbook reference (0, 44, 68) looking at (0, 2, −8); raised and tilted up so all four bars fit and the
+    // horizon, sky and passing ships show across the top of the TV
+    this.camBase = new THREE.Vector3(0, 46, 86);
+    this.lookBase = new THREE.Vector3(0, 0, -25);
     this.camNudge = new THREE.Vector3(); this.camNudgeTarget = new THREE.Vector3(); this.pull = 0; this.pullTarget = 0;
     this.orbit = 0; this.mode = 'lobby';
     this.clock = new THREE.Clock(); this.t = 0;
     this.bars = [null, null, null, null];
     this.tierLevel = 0; this.frames = []; this.lowSince = 0;
     this.look = { ...LOOKS.sunny }; this.lookTarget = LOOKS.sunny; this.weatherType = 'sunny';
-    this.day = null;
+    this.fixture = null; this.day = null; this.defectors = [];
     this.build();
     this.resize();
     addEventListener('resize', () => this.resize());
@@ -143,7 +293,7 @@ export class Beach {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // keep the whole beach in frame on narrow screens
-    this.camera.fov = w / h < 1.7 ? 52 * (1.78 / (w / h)) ** 0.6 : 52;
+    this.camera.fov = w / h < 1.7 ? 50 * (1.78 / (w / h)) ** 0.6 : 50;
     this.camera.updateProjectionMatrix();
   }
 
@@ -154,48 +304,61 @@ export class Beach {
     const sun = this.sunLight = new THREE.DirectionalLight('#fff4dd', 1.25);
     sun.position.set(-40, 90, 50); sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -110, right: 110, top: 70, bottom: -70, near: 10, far: 260 });
+    Object.assign(sun.shadow.camera, { left: -100, right: 100, top: 60, bottom: -70, near: 10, far: 260 });
     sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.4;
     S.add(sun);
 
     this.buildSand(); this.buildSea(); this.buildSky(); this.buildProps();
-    this.buildCrowd(); this.buildRain(); this.buildEvents();
-    this.sport = new Sport(S, { toon, figure, animateFigure, labelSprite, canvasTex });
+    this.buildLife(); this.buildStands(); this.buildRain(); this.buildEvents();
+    this.vb = new Volleyball(S, { toon, figure, animateFigure, poseArms, labelSprite, canvasTex });
   }
 
   buildSand() {
-    const geo = new THREE.PlaneGeometry(320, 110, 128, 50); geo.rotateX(-Math.PI / 2); geo.translate(0, 0, 19);
-    const pos = geo.attributes.position, col = [], a = new THREE.Color('#ffe9c4'), b = new THREE.Color('#f3d8a4'), wet = new THREE.Color('#d9b97c');
+    const geo = new THREE.PlaneGeometry(420, 120, 140, 50); geo.rotateX(-Math.PI / 2); geo.translate(0, 0, 22);
+    const pos = geo.attributes.position, uv = geo.attributes.uv, col = [];
+    const a = new THREE.Color('#ffe9c4'), b = new THREE.Color('#f3d8a4'), wet = new THREE.Color('#c9a56c');
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
-      const onPitch = Math.abs(x) < 22 && Math.abs(z) < 12;
-      const bump = onPitch ? 0 : (Math.sin(x * 0.21) * Math.cos(z * 0.17) + Math.sin(x * 0.07 + z * 0.11)) * 0.22;
-      const slope = z < -26 ? (z + 26) * 0.12 : 0;   // dips into the sea
+      const flat = Math.abs(x) < COURT.hx + 3 && Math.abs(z) < COURT.hz + 3;
+      const bump = flat ? 0 : (Math.sin(x * 0.21) * Math.cos(z * 0.17) + Math.sin(x * 0.07 + z * 0.11)) * 0.25;
+      const slope = z < SHORE + 4 ? (z - SHORE - 4) * 0.13 : 0;   // dips into the sea
       pos.setY(i, bump + slope);
+      uv.setXY(i, x / 18, z / 18);                                 // texture in world units
       const c = a.clone().lerp(b, 0.5 + 0.5 * Math.sin(x * 0.13 + z * 0.29) * Math.cos(z * 0.07));
-      if (z < -30) c.lerp(wet, Math.min(1, (-30 - z) / 4));
+      if (z < SHORE + 3) c.lerp(wet, Math.min(1, (SHORE + 3 - z) / 3));
       col.push(c.r, c.g, c.b);
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     geo.computeVertexNormals();
-    this.sandMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap, color: '#ffffff' });
+    this.sandMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap, map: sandTexture() });
     const sand = new THREE.Mesh(geo, this.sandMat); sand.receiveShadow = true; this.scene.add(sand);
   }
 
   buildSea() {
-    const geo = new THREE.PlaneGeometry(420, 200, 84, 40); geo.rotateX(-Math.PI / 2); geo.translate(0, -0.6, -134);
+    this.waterTex = waterTexture();
+    // near sea: animated waves, from the shore out to z = −330
+    const geo = new THREE.PlaneGeometry(900, 300, 120, 48); geo.rotateX(-Math.PI / 2); geo.translate(0, -0.6, SHORE - 150);
+    const uv = geo.attributes.uv, p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / 40, p.getZ(i) / 40);
     this.seaGeo = geo; this.seaBase = Float32Array.from(geo.attributes.position.array);
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 3), 3));
-    this.seaMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap, transparent: true, opacity: 0.96 });
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(p.count * 3), 3));
+    this.seaMat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap, map: this.waterTex, transparent: true, opacity: 0.97 });
     this.sea = new THREE.Mesh(geo, this.seaMat); this.sea.receiveShadow = true; this.scene.add(this.sea);
+    // far sea: flat, wide enough to fill every corner of the screen out to the horizon
+    const far = new THREE.PlaneGeometry(6000, 2400, 1, 1); far.rotateX(-Math.PI / 2); far.translate(0, -0.6, SHORE - 300 - 1200);
+    const fuv = far.attributes.uv, fp = far.attributes.position;
+    for (let i = 0; i < fp.count; i++) fuv.setXY(i, fp.getX(i) / 120, fp.getZ(i) / 60);
+    this.farTex = this.waterTex.clone(); this.farTex.needsUpdate = true;
+    this.farSeaMat = new THREE.MeshToonMaterial({ color: LOOKS.sunny.sea[2], gradientMap, map: this.farTex });
+    this.farSea = new THREE.Mesh(far, this.farSeaMat); this.scene.add(this.farSea);
     this.paintSea(LOOKS.sunny.sea);
     // foam line that laps in and out
     const foamTex = canvasTex(256, 32, (ctx, w, h) => { const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,.95)'); g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, h); });
-    this.foam = new THREE.Mesh(new THREE.PlaneGeometry(220, 2.4), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, depthWrite: false }));
-    this.foam.rotation.x = -Math.PI / 2; this.foam.position.set(0, -0.15, -33); this.scene.add(this.foam);
+    this.foam = new THREE.Mesh(new THREE.PlaneGeometry(420, 2.6), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, depthWrite: false }));
+    this.foam.rotation.x = -Math.PI / 2; this.foam.position.set(0, -0.15, SHORE - 1); this.scene.add(this.foam);
     // three layers of rolling wave crests
     this.crests = [0, 1, 2].map(i => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(230, 1.1), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0.6, depthWrite: false }));
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(420, 1.2), new THREE.MeshBasicMaterial({ map: foamTex, transparent: true, opacity: 0.6, depthWrite: false }));
       m.rotation.x = -Math.PI / 2; m.userData.phase = i / 3; this.scene.add(m); return m;
     });
   }
@@ -203,37 +366,88 @@ export class Beach {
     const [light, mid, deep] = cols.map(c => new THREE.Color(c));
     const pos = this.seaGeo.attributes.position, col = this.seaGeo.attributes.color;
     for (let i = 0; i < pos.count; i++) {
-      const z = this.seaBase[i * 3 + 2], f = Math.min(1, (-34 - z) / 120);
-      const c = f < 0.25 ? light.clone().lerp(mid, f / 0.25) : mid.clone().lerp(deep, (f - 0.25) / 0.75);
+      const z = this.seaBase[i * 3 + 2], f = Math.min(1, (SHORE - z) / 260);
+      const c = f < 0.12 ? light.clone().lerp(mid, f / 0.12) : mid.clone().lerp(deep, Math.min(1, (f - 0.12) / 0.6));
       col.setXYZ(i, c.r, c.g, c.b);
     }
     col.needsUpdate = true;
+    this.farSeaMat.color.copy(deep);
   }
 
   buildSky() {
-    // sun with a halo, low in the sky band above the horizon
-    const halo = canvasTex(256, 256, (ctx, w) => { const g = ctx.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,250,220,.9)'); g.addColorStop(0.5, 'rgba(255,230,160,.25)'); g.addColorStop(1, 'rgba(255,220,150,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, w); });
+    // the sun, low over the sea in the band of sky above the horizon
+    const halo = canvasTex(256, 256, (ctx, w) => { const g = ctx.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.22, 'rgba(255,250,220,.95)'); g.addColorStop(0.45, 'rgba(255,230,160,.3)'); g.addColorStop(1, 'rgba(255,220,150,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, w, w); });
     this.sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: halo, color: '#fff6c8', fog: false, depthWrite: false, transparent: true }));
-    this.sun.position.set(110, 34, -300); this.sun.scale.set(70, 70, 1); this.sun.renderOrder = -1; this.scene.add(this.sun);
-    // clouds: puffs of flattened spheres
+    this.sun.position.set(520, 150, -1500); this.sun.renderOrder = -2; this.scene.add(this.sun);
+    // a sun glitter path on the far water
+    const glitTex = canvasTex(64, 512, (ctx, w, h) => { const r = seeded(5); for (let i = 0; i < 260; i++) { const y = r() * h, s = 1 + (y / h) * 3; ctx.fillStyle = `rgba(255,250,220,${0.3 + r() * 0.6})`; ctx.fillRect(w / 2 + (r() - 0.5) * w * (0.3 + y / h * 0.7), y, s * 3, s); } });
+    this.glitter = new THREE.Mesh(new THREE.PlaneGeometry(220, 1200), new THREE.MeshBasicMaterial({ map: glitTex, transparent: true, depthWrite: false, fog: false, opacity: 0.8 }));
+    this.glitter.rotation.x = -Math.PI / 2; this.glitter.position.set(330, -0.3, -1000); this.glitter.rotation.z = -0.32; this.scene.add(this.glitter);
+    // clouds: puffs of flattened spheres, far over the horizon
     this.clouds = [];
     const puff = new THREE.SphereGeometry(1, 14, 10);
-    this.cloudMat = new THREE.MeshToonMaterial({ color: '#ffffff', gradientMap, transparent: true, opacity: 0.9, fog: false });
-    for (let i = 0; i < 14; i++) {
-      const c = new THREE.Group();
-      const n = 4 + (i % 3);
-      for (let j = 0; j < n; j++) { const m = new THREE.Mesh(puff, this.cloudMat); m.position.set(j * 4 - n * 2, Math.sin(j * 1.7) * 1.4, Math.cos(j) * 2); m.scale.set(5 + (j % 2) * 2, 3 + (j % 3), 4); c.add(m); }
-      const far = i < 9;
-      c.position.set(-200 + i * 32 + (i % 2) * 11, far ? 26 + (i % 4) * 5 : 58 + (i % 3) * 4, far ? -250 - (i % 3) * 20 : -60 - (i % 4) * 25);
-      c.scale.setScalar(far ? 1.6 : 1.1);
-      c.userData = { speed: 1.2 + (i % 5) * 0.4, far };
+    this.cloudMat = new THREE.MeshToonMaterial({ color: '#ffffff', emissive: '#7a8590', gradientMap, transparent: true, opacity: 0.9, fog: false });
+    const r = seeded(77);
+    for (let i = 0; i < 16; i++) {
+      const n = 4 + Math.floor(r() * 4), geos = [];
+      for (let j = 0; j < n; j++) geos.push(puff.clone().applyMatrix4(new THREE.Matrix4().compose(new THREE.Vector3(j * 4 - n * 2, Math.sin(j * 1.7) * 1.4 + (j % 2), Math.cos(j) * 2), new THREE.Quaternion(), new THREE.Vector3(5 + (j % 2) * 2.5, 3 + (j % 3), 4))));
+      const c = new THREE.Mesh(mergeGeometries(geos), this.cloudMat);
+      c.position.set(-1400 + i * 180 + r() * 90, 70 + r() * 110, -1500 - r() * 400);
+      c.scale.setScalar(9 + r() * 7);
+      c.userData = { speed: 4 + r() * 6, order: r() };
       this.scene.add(c); this.clouds.push(c);
     }
+    // a ship on the horizon and a plane trailing a banner
+    this.ship = this.makeShip(); this.ship.scale.setScalar(2.2); this.ship.position.set(-700, 0, -950); this.scene.add(this.ship);
+    this.sail = this.makeSailboat(); this.sail.position.set(300, 0, -520); this.scene.add(this.sail);
+    this.plane = this.makePlane(); this.plane.visible = false; this.scene.add(this.plane);
+    this.nextPlane = 8;
+  }
+  makeShip() {
+    const g = new THREE.Group(), white = toon('#f8fafc'), red = toon('#dc2626'), navy = toon('#1e3a5f');
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(70, 8, 12), navy); hull.position.y = 4;
+    const band = new THREE.Mesh(new THREE.BoxGeometry(70.5, 1.6, 12.4), red); band.position.y = 1;
+    const deck1 = new THREE.Mesh(new THREE.BoxGeometry(46, 6, 10), white); deck1.position.set(-4, 11, 0);
+    const deck2 = new THREE.Mesh(new THREE.BoxGeometry(30, 5, 9), white); deck2.position.set(-6, 16.5, 0);
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3, 8, 10), red); funnel.position.set(-8, 23, 0);
+    const bow = new THREE.Mesh(new THREE.ConeGeometry(6, 14, 4), navy); bow.rotation.z = -Math.PI / 2; bow.position.set(41, 4, 0); bow.scale.set(1, 1, 1);
+    g.add(hull, band, deck1, deck2, funnel, bow);
+    // portholes
+    for (let i = 0; i < 12; i++) { const w = new THREE.Mesh(new THREE.BoxGeometry(2, 1.2, 0.3), toon('#fde68a')); w.position.set(-24 + i * 3.6, 11, 5.1); g.add(w); }
+    mergeStatic(g);
+    g.userData.speed = 9;
+    return g;
+  }
+  makeSailboat() {
+    const g = new THREE.Group();
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(14, 2.4, 4.5), toon('#ffffff')); hull.position.y = 1;
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 16, 6), toon('#94a3b8')); mast.position.y = 9;
+    const sailGeo = new THREE.BufferGeometry(); sailGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 2.5, 0, 0, 16.5, 0, 7, 2.5, 0, 0, 2.5, 0, -5, 2.5, 0, 0, 13, 0], 3)); sailGeo.computeVertexNormals();
+    const sail = new THREE.Mesh(sailGeo, toon('#fefce8', { side: THREE.DoubleSide }));
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(14.1, 0.6, 4.6), toon('#0ea5e9')); stripe.position.y = 1.4;
+    g.add(hull, stripe, mast, sail); mergeStatic(g); g.scale.setScalar(1.6);
+    g.userData.speed = -3;
+    return g;
+  }
+  makePlane() {
+    const g = new THREE.Group(), white = toon('#ffffff'), red = toon('#ef4444');
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(1.4, 9, 4, 8), white); body.rotation.z = Math.PI / 2;
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 16), red);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.6, 3, 0.3), red); tail.position.set(-5.2, 1.6, 0);
+    const tailW = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 6), red); tailW.position.set(-5.2, 0.4, 0);
+    g.add(body, wing, tail, tailW); mergeStatic(g);
+    const bannerTex = canvasTex(1024, 160, (ctx, w, h) => { ctx.fillStyle = '#fff7ea'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#ff6b5e'; ctx.font = '900 108px Inter, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('COCKTAIL SHACK 🍹', w / 2, h / 2 + 6); });
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(44, 7, 16, 1), new THREE.MeshBasicMaterial({ map: bannerTex, side: THREE.DoubleSide, fog: false }));
+    banner.position.set(-32, 0, 0); banner.userData.base = Float32Array.from(banner.geometry.attributes.position.array);
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 9, 4), toon('#334155')); rope.rotation.z = Math.PI / 2; rope.position.set(-7.5, 0, 0);
+    g.add(banner, rope); g.userData.banner = banner;
+    g.scale.setScalar(2.2);
+    return g;
   }
 
   buildProps() {
     const S = this.scene;
-    // palm tree
+    // palm trees
     const palm = this.palm = new THREE.Group();
     const trunkM = toon('#a0703f');
     for (let i = 0; i < 9; i++) { const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.75 - i * 0.04, 0.85 - i * 0.04, 2.2, 8), trunkM); seg.position.set(Math.sin(i * 0.2) * i * 0.45, 1.1 + i * 2.05, 0); seg.rotation.z = -0.06 * i; seg.castShadow = true; palm.add(seg); }
@@ -245,29 +459,14 @@ export class Beach {
       leaf.rotation.set(0, (i / 7) * Math.PI * 2, 1.9); leaf.castShadow = true; top.add(leaf);
     }
     for (let i = 0; i < 3; i++) { const nut = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), toon('#5b3a1e')); nut.position.set(Math.cos(i * 2) * 0.8, -0.6, Math.sin(i * 2) * 0.8); top.add(nut); }
+    mergeStatic(top); mergeStatic(palm);
     palm.add(top); palm.userData.top = top;
     palm.position.set(-62, 0, -12); S.add(palm);
-    const palm2 = palm.clone(); palm2.userData = { top: palm2.children[palm2.children.length - 1] };
-    palm2.position.set(66, 0, -6); palm2.scale.setScalar(0.85); palm2.rotation.y = 2; S.add(palm2);
-    this.palm2 = palm2;
-
-    // sunbathers on towels with parasols along the shoreline strip
-    this.sunbathers = new THREE.Group(); S.add(this.sunbathers);
-    const towelCols = ['#ff6b5e', '#14b8a6', '#f59e0b', '#8b5cf6', '#38bdf8', '#f472b6', '#facc15'];
-    const xs = [-30, -20, -8, 6, 17, 28, -62, 62, -74, 76];
-    xs.forEach((x, i) => {
-      const g = new THREE.Group();
-      const towel = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 6.4), toon(towelCols[i % towelCols.length])); towel.receiveShadow = true; g.add(towel);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.42, 0.13, 0.7), toon('#ffffff')); stripe.position.z = 1.6; g.add(stripe);
-      const f = figure({ shirt: SHIRTS[i % SHIRTS.length], eyes: false, scale: 0.8 }); f.rotation.x = -Math.PI / 2; f.position.set(0, 0.85, 2.4); g.add(f);
-      if (i % 2 === 0) {
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 7, 6), toon('#e5e7eb')); pole.position.set(2.2, 3.5, 0); g.add(pole);
-        const shade = new THREE.Mesh(new THREE.ConeGeometry(4.2, 1.6, 10), toon(towelCols[(i + 3) % towelCols.length])); shade.position.set(2.2, 7, 0); shade.castShadow = true; g.add(shade);
-      }
-      g.position.set(x, 0.05, -27.5 - (i % 3) * 1.2); g.rotation.y = (i % 2 ? 0.3 : -0.25);
-      g.userData.figure = f;
-      this.sunbathers.add(g);
-    });
+    this.palms = [palm];
+    for (const [x, z, s, ry] of [[66, 0, -6, 0.85, 2], [-80, 0, 6, 1.1, 1], [84, 0, 10, 1, 4]].map(a => [a[0], a[2], a[3], a[4]])) {
+      const p = palm.clone(); p.userData = { top: p.children[p.children.length - 1] };
+      p.position.set(x, 0, z); p.scale.setScalar(s); p.rotation.y = ry; S.add(p); this.palms.push(p);
+    }
 
     // trophy and bunting for the Beach Cup Final
     this.finalProps = new THREE.Group(); this.finalProps.visible = false; S.add(this.finalProps);
@@ -275,37 +474,131 @@ export class Beach {
     const plinth = new THREE.Mesh(new THREE.BoxGeometry(3.6, 2.4, 3.6), toon('#ffffff')); plinth.position.y = 1.2; plinth.castShadow = true;
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 0.6, 2.6, 16, 1, true), gold); cup.position.y = 4.9;
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.9, 1.2, 10), gold); stem.position.y = 3.0;
-    const trophy = new THREE.Group(); trophy.add(plinth, cup, stem); trophy.position.set(-27, 0, -9); this.finalProps.add(trophy);
-    this.trophy = trophy;
+    const trophy = new THREE.Group(); trophy.add(plinth, cup, stem); trophy.position.set(-24, 0, -17); this.finalProps.add(trophy);
     const flagCols = ['#ff6b5e', '#14b8a6', '#f59e0b', '#8b5cf6', '#ffffff'];
-    for (const z of [-12, 12]) {
-      for (let i = 0; i < 22; i++) {
+    for (const z of [-COURT.hz - 1.5, COURT.hz + 1.5]) {
+      for (let i = 0; i < 20; i++) {
         const tri = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.4, 3), toon(flagCols[i % 5])); tri.rotation.x = Math.PI;
-        const x = -21 + i * 2; tri.position.set(x, 6.4 - Math.sin((i / 21) * Math.PI) * 1.2, z); this.finalProps.add(tri);
+        const x = -COURT.hx - 1 + i * ((COURT.hx * 2 + 2) / 19); tri.position.set(x, 7.4 - Math.sin((i / 19) * Math.PI) * 1.2, z); this.finalProps.add(tri);
       }
-      for (const x of [-22, 22]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 7.5, 6), toon('#e5e7eb')); p.position.set(x, 3.75, z); this.finalProps.add(p); }
+      for (const x of [-COURT.hx - 1.5, COURT.hx + 1.5]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 8.5, 6), toon('#e5e7eb')); p.position.set(x, 4.25, z); this.finalProps.add(p); }
+    }
+    mergeStatic(this.finalProps); mergeStatic(trophy);
+  }
+
+  // ---------------------------------------------------------------- people on the beach
+  // Every item has a kind, an order (which ones appear first as the beach fills) and whether it sits where the
+  // court goes. How many of each kind show depends on the weather and whether there's a match.
+  buildLife() {
+    const r = seeded(31), S = this.scene;
+    this.life = [];
+    const add = (kind, group, { central = false, order = r() } = {}) => {
+      group.userData.kind = kind; group.userData.central = central; group.userData.order = order; group.userData.vis = 0;
+      group.userData.base = group.scale.x; group.visible = false; group.scale.setScalar(0.001);
+      S.add(group); this.life.push(group); return group;
+    };
+    const towelCols = ['#ff6b5e', '#14b8a6', '#f59e0b', '#8b5cf6', '#38bdf8', '#f472b6', '#facc15', '#22c55e'];
+    const parasolCols = ['#ef4444', '#0ea5e9', '#f59e0b', '#a855f7', '#ec4899', '#10b981'];
+    // sunbathers on towels: along the shoreline strip and, on quiet days, all over the middle of the beach
+    const spots = [];
+    for (let i = 0; i < 12; i++) spots.push([-78 + i * 14 + (r() - 0.5) * 5, -26 - r() * 3, false]);
+    const central = [[-24, -12], [-14, -16], [-4, -12], [8, -15], [19, -11], [27, -16], [-27, -2], [-17, 2], [-6, -3], [6, 1], [16, -2], [26, 3], [-22, 11], [-9, 9], [3, 12], [14, 9], [24, 12]];
+    for (const [x, z] of central) spots.push([x + (r() - 0.5) * 3, z + (r() - 0.5) * 2, true]);
+    spots.forEach(([x, z, cen], i) => {
+      const g = new THREE.Group();
+      const towel = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 6.4), toon(towelCols[i % towelCols.length])); towel.receiveShadow = true; g.add(towel);
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.42, 0.13, 0.7), toon('#ffffff')); stripe.position.z = 1.6; g.add(stripe);
+      const f = figure({ shirt: SHIRTS[i % SHIRTS.length], eyes: false, arms: true, scale: 0.8, shadow: false, rnd: r });
+      f.rotation.x = -Math.PI / 2; f.position.set(0, 0.85, 2.4);
+      f.userData.arms.forEach((a, k) => { a.rotation.z = k ? 0.4 : -0.4; });
+      g.add(f); g.userData.figure = f;
+      if (i % 3 !== 1) {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 7, 6), toon('#e5e7eb')); pole.position.set(2.2, 3.5, 0); g.add(pole);
+        const shade = new THREE.Mesh(new THREE.ConeGeometry(4.2, 1.6, 12), toon(parasolCols[i % parasolCols.length])); shade.position.set(2.2, 7, 0); shade.castShadow = true; g.add(shade);
+      }
+      if (i % 4 === 0) { const ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 12, 8), toon(['#f43f5e', '#facc15', '#38bdf8'][i % 3])); ball.position.set(-2.2, 0.7, -1); g.add(ball); }
+      g.remove(f); mergeStatic(g); g.add(f);
+      g.position.set(x, 0.06, z); g.rotation.y = (r() - 0.5) * 0.9;
+      add('towel', g, { central: cen, order: (cen ? 0.3 : 0) + r() * 0.7 });
+    });
+    // pairs knocking a ball about with bats, and a frisbee pair
+    const pairs = [[-20, -6, 'bat'], [12, 5, 'bat'], [22, -8, 'bat'], [-6, 6, 'frisbee'], [56, -14, 'bat'], [-58, -16, 'frisbee']];
+    pairs.forEach(([x, z, type], i) => {
+      const g = new THREE.Group();
+      const a = figure({ shirt: SHIRTS[(i * 3) % SHIRTS.length], shorts: '#0f172a', scale: 0.85, eyes: false, rnd: r });
+      const b = figure({ shirt: SHIRTS[(i * 3 + 5) % SHIRTS.length], shorts: '#7c2d12', scale: 0.85, eyes: false, rnd: r });
+      a.position.set(-4.5, 0, 0); b.position.set(4.5, 0, 0); a.rotation.y = Math.PI / 2; b.rotation.y = -Math.PI / 2;
+      const ball = type === 'bat' ? new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), toon('#facc15')) : new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.65, 0.14, 14), toon('#f97316'));
+      g.add(a, b, ball);
+      g.userData.pair = { a, b, ball, type, phase: r() * 4 };
+      g.position.set(x, 0, z); g.rotation.y = r() * 1.2 - 0.6;
+      add(type === 'bat' ? 'pair' : 'frisbee', g, { central: Math.abs(x) < 34 && Math.abs(z) < 18 });
+    });
+    // children building sandcastles
+    const castles = [[-12, -21], [18, -20], [-30, 7], [30, -3]];
+    castles.forEach(([x, z], i) => {
+      const g = new THREE.Group(), sandM = toon('#e9c98f');
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.5, 1.4, 12), sandM); base.position.y = 0.7;
+      g.add(base);
+      for (let k = 0; k < 4; k++) {
+        const tx = Math.cos(k * Math.PI / 2) * 1.6, tz = Math.sin(k * Math.PI / 2) * 1.6;
+        const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 2.2, 8), sandM); tw.position.set(tx, 1.8, tz); g.add(tw);
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(0.6, 0.9, 8), sandM); cap.position.set(tx, 3.3, tz); g.add(cap);
+      }
+      const keep = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.9, 3, 8), sandM); keep.position.y = 2.6; g.add(keep);
+      const flag = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 3), toon('#ef4444')); flag.rotation.z = -Math.PI / 2; flag.position.set(0.4, 4.8, 0); g.add(flag);
+      const kid = figure({ shirt: ['#f472b6', '#38bdf8', '#facc15', '#4ade80'][i], shorts: '#1e3a8a', scale: 0.55, eyes: true, rnd: r });
+      kid.position.set(3.2, 0, 1); kid.rotation.y = -2.2; g.add(kid);
+      const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.42, 0.9, 10), toon('#ef4444')); bucket.position.set(4.4, 0.45, -0.6); g.add(bucket);
+      g.remove(kid); mergeStatic(g); g.add(kid);
+      g.userData.kid = kid;
+      g.position.set(x, 0, z);
+      add('castle', g, { central: Math.abs(x) < 34 && Math.abs(z) < 18 });
+    });
+    // swimmers bobbing in the shallows, some in rubber rings
+    for (let i = 0; i < 16; i++) {
+      const g = new THREE.Group();
+      const f = figure({ shirt: ['#0ea5e9', '#ef4444', '#f59e0b', '#ec4899', '#22c55e'][i % 5], scale: 0.85, eyes: false, rnd: r, shadow: false });
+      f.position.y = -2.3; g.add(f);
+      if (i % 3 === 0) { const ring = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.5, 8, 16), toon(['#f43f5e', '#facc15', '#a855f7'][i % 3])); ring.rotation.x = Math.PI / 2; ring.position.y = 0.1; g.add(ring); }
+      g.userData.swim = { f, phase: r() * 6 };
+      g.position.set(-90 + r() * 180, -0.5, SHORE - 7 - r() * 16); g.rotation.y = r() * 6;
+      add('swimmer', g);
+    }
+    // walkers strolling along the water's edge
+    for (let i = 0; i < 8; i++) {
+      const f = figure({ shirt: SHIRTS[(i * 5) % SHIRTS.length], shorts: ['#334155', '#1e3a8a', '#78350f'][i % 3], scale: 0.85, eyes: false, rnd: r });
+      const g = new THREE.Group(); g.add(f);
+      g.userData.walk = { f, x0: -110 + r() * 220, speed: (r() < 0.5 ? -1 : 1) * (3 + r() * 2), z: SHORE + 1.5 + r() * 3, shirt: SHIRTS[(i * 5) % SHIRTS.length], jumper: JUMPERS[i % JUMPERS.length] };
+      g.position.set(g.userData.walk.x0, 0, g.userData.walk.z);
+      add('walker', g);
     }
   }
 
-  buildCrowd() {
-    // spectators around the pitch (outside the keep-out zone)
+  // spectators in stands around the court: four rows behind and two at each end (none in front, so the TV sees the play)
+  buildStands() {
+    const r = seeded(41);
     this.spectators = [];
     const spots = [];
-    for (let i = 0; i < 14; i++) spots.push([-20 + i * 3.1, 15 + (i % 2) * 2.6]);
-    for (let i = 0; i < 8; i++) spots.push([-24 - (i % 2) * 2.6, -8 + i * 2.4]);
-    for (let i = 0; i < 8; i++) spots.push([24 + (i % 2) * 2.6, -8 + i * 2.4]);
-    spots.forEach(([x, z], i) => {
-      const f = figure({ shirt: SHIRTS[i % SHIRTS.length], shorts: ['#123c4a', '#1e3a8a', '#7c2d12', '#334155'][i % 4], eyes: i % 3 === 0, scale: 0.85 });
+    const hx = COURT.hx, hz = COURT.hz;
+    for (let row = 0; row < 4; row++) for (let i = 0; i < 12; i++) spots.push([-hx + 1.5 + i * ((hx * 2 - 3) / 11) + (row % 2) * 1.2, -hz - 3 - row * 2.3, row]);
+    for (const s of [-1, 1]) for (let row = 0; row < 2; row++) for (let i = 0; i < 6; i++) spots.push([s * (hx + 4 + row * 2.4), -hz + 1.5 + i * ((hz * 2 - 3) / 5), row + 0.2]);
+    spots.forEach(([x, z, row], i) => {
+      const shirt = SHIRTS[i % SHIRTS.length];
+      const f = figure({ shirt, shorts: ['#123c4a', '#1e3a8a', '#7c2d12', '#334155'][i % 4], eyes: i % 4 === 0, scale: 0.85, rnd: r });
       f.position.set(x, 0, z); f.lookAt(0, 0, 0);
-      f.userData.home = new THREE.Vector3(x, 0, z); f.userData.shirt = SHIRTS[i % SHIRTS.length]; f.userData.jumper = JUMPERS[i % JUMPERS.length];
+      f.userData.home = new THREE.Vector3(x, 0, z); f.userData.shirt = shirt; f.userData.jumper = JUMPERS[i % JUMPERS.length];
+      // nearest rows fill first, with a little randomness so the stands fill unevenly
+      f.userData.order = row * 0.25 + r() * 0.3; f.userData.vis = 0; f.userData.base = f.userData.baseScale; f.visible = false;
       this.scene.add(f); this.spectators.push(f);
     });
+    this.spectators.sort((a, b) => a.userData.order - b.userData.order);
   }
 
   buildRain() {
-    const n = 2200, pos = new Float32Array(n * 6);
+    const n = 2400, pos = new Float32Array(n * 6);
     for (let i = 0; i < n; i++) {
-      const x = (Math.random() - 0.5) * 220, y = Math.random() * 70, z = -60 + Math.random() * 130;
+      const x = (Math.random() - 0.5) * 260, y = Math.random() * 80, z = -80 + Math.random() * 150;
       pos.set([x, y, z, x - 0.5, y - 2.4, z + 0.3], i * 6);
     }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -315,19 +608,25 @@ export class Beach {
   }
 
   buildEvents() {
-    // rival juice van with a giant smoothie on its roof
+    // rival juice van with a giant smoothie on its roof; it drives in along the front of the beach
     const van = this.van = new THREE.Group();
     const bodyM = toon('#f472b6'), white = toon('#ffffff'), dark = toon('#1f2937');
     const box = new THREE.Mesh(new THREE.BoxGeometry(12, 5.5, 5.6), bodyM); box.position.y = 4; box.castShadow = true;
     const cab = new THREE.Mesh(new THREE.BoxGeometry(4, 3.8, 5.4), white); cab.position.set(7.4, 3.2, 0); cab.castShadow = true;
     const win = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 5.5), toon('#93c5fd')); win.position.set(8.4, 4, 0);
     van.add(box, cab, win);
-    for (const [x, z] of [[-4, 2.9], [4.5, 2.9], [-4, -2.9], [4.5, -2.9]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.8, 14), dark); w.rotation.x = Math.PI / 2; w.position.set(x, 1.2, z); van.add(w); }
+    this.vanWheels = [];
+    for (const [x, z] of [[-4, 2.9], [4.5, 2.9], [-4, -2.9], [4.5, -2.9]]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.8, 14), dark); w.rotation.x = Math.PI / 2; w.position.set(x, 1.2, z); van.add(w); this.vanWheels.push(w); }
+    // serving hatch with an awning on the beach side
+    const hatch = new THREE.Mesh(new THREE.BoxGeometry(6, 2.4, 0.3), toon('#1f2937')); hatch.position.set(-1, 4.6, -2.85);
+    const awn = new THREE.Mesh(new THREE.BoxGeometry(7, 0.3, 2.2), toon('#fde047')); awn.position.set(-1, 6.1, -3.8); awn.rotation.x = -0.35;
+    const vendor = figure({ shirt: '#fde047', shorts: '#9d174d', scale: 0.7 }); vendor.position.set(-1, 1.8, -1.4); vendor.rotation.y = Math.PI;
+    van.add(hatch, awn, vendor); this.vendor = vendor;
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 1.5, 4.2, 14), toon('#fb7185')); cup.position.set(-1, 9, 0);
     const lid = new THREE.Mesh(new THREE.SphereGeometry(2.25, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), toon('#fde68a')); lid.position.set(-1, 11.1, 0);
     const straw = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 4, 6), toon('#22c55e')); straw.position.set(-0.2, 13.2, 0); straw.rotation.z = -0.3;
     van.add(cup, lid, straw);
-    const sign = labelSprite('JUICE!', { bg: '#fde047', fg: '#9d174d', scale: 0.045 }); sign.position.set(0, 6, 3.2); van.add(sign);
+    const sign = labelSprite('JUICE!', { bg: '#fde047', fg: '#9d174d', scale: 0.03 }); sign.position.set(-1.5, 4.4, 3.4); van.add(sign);
     van.visible = false; this.scene.add(van);
 
     // seven gulls
@@ -369,7 +668,7 @@ export class Beach {
     const add = (geo, m, px, py, pz) => { const mesh = new THREE.Mesh(geo, m); mesh.position.set(px, py, pz); mesh.castShadow = true; mesh.receiveShadow = true; g.add(mesh); return mesh; };
     add(new THREE.BoxGeometry(10, 0.3, 6), woodL, 0, 0.15, 0);                    // floor
     add(new THREE.BoxGeometry(10, 3.2, 0.5), wood, 0, 1.6, 2.75);                  // counter front
-    const front = add(new THREE.BoxGeometry(10.6, 0.4, 2), woodL, 0, 3.4, 2.6);     // counter top
+    add(new THREE.BoxGeometry(10.6, 0.4, 2), woodL, 0, 3.4, 2.6);                  // counter top
     add(new THREE.BoxGeometry(0.5, 3.2, 6), wood, -4.75, 1.6, 0);                   // sides
     add(new THREE.BoxGeometry(0.5, 3.2, 6), wood, 4.75, 1.6, 0);
     add(new THREE.BoxGeometry(10, 7.5, 0.5), wood, 0, 3.75, -2.75);                 // back wall
@@ -382,12 +681,11 @@ export class Beach {
     const roofTex = patternTexture(PATTERNS[b.slot], b.colour); roofTex.wrapS = roofTex.wrapT = THREE.RepeatWrapping; roofTex.repeat.set(3, 2);
     const roofMat = new THREE.MeshToonMaterial({ map: roofTex, gradientMap });
     const roof = add(new THREE.BoxGeometry(11.6, 0.5, 8), roofMat, 0, 7.75, 0.6); roof.rotation.x = 0.12;
-    const scallops = [];
     const scGeo = new THREE.CylinderGeometry(0.74, 0.74, 0.3, 14, 1, false, 0, Math.PI);
     scGeo.rotateZ(-Math.PI / 2); scGeo.rotateY(Math.PI / 2);      // a half disc hanging down, facing the front
-    for (let i = 0; i < 8; i++) scallops.push(add(scGeo, i % 2 ? white : colour, -5.05 + i * 1.44, 7.05, 4.62));
+    for (let i = 0; i < 8; i++) add(scGeo, i % 2 ? white : colour, -5.05 + i * 1.44, 7.05, 4.62);
     // flag
-    const pole = add(new THREE.CylinderGeometry(0.15, 0.15, 6, 6), white, 4.6, 10.8, -2.6);
+    add(new THREE.CylinderGeometry(0.15, 0.15, 6, 6), white, 4.6, 10.8, -2.6);
     const flagGeo = new THREE.PlaneGeometry(3.4, 2.1, 10, 2); flagGeo.translate(1.7, 0, 0);
     const flagTex = canvasTex(128, 80, (ctx, w, h) => { ctx.fillStyle = b.colour; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#fff'; ctx.font = '900 60px Inter, system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(LETTERS[b.slot], w / 2, h / 2 + 4); });
     const flag = add(flagGeo, new THREE.MeshToonMaterial({ map: flagTex, gradientMap, side: THREE.DoubleSide }), 4.7, 12.7, -2.6);
@@ -408,12 +706,13 @@ export class Beach {
 
     // name badge floating above, in the player's colour, with the seat letter
     const badge = labelSprite(b.bar, { bg: b.colour, letter: LETTERS[b.slot], scale: 0.04 }); badge.position.set(0, 16.5, 0); g.add(badge);
-    // price board (appears at match start)
+    // price board on an easel in front (appears at the start of the day)
     const price = labelSprite('15p', { bg: '#1f2937', fg: '#fde68a', size: 72, scale: 0.042 }); price.position.set(-6.2, 2.6, 5.4); price.visible = false; g.add(price);
     const easel = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 4), toon('#8b5a2b')); easel.position.set(-6.2, 1.3, 5.4); easel.rotation.y = Math.PI / 4; easel.castShadow = true; g.add(easel);
 
+    mergeStatic(g);
     this.scene.add(g);
-    const bar = { slot: b.slot, colour: b.colour, name: b.bar, group: g, badge, price, flag, boards, roofMat, scallops, glass,
+    const bar = { slot: b.slot, colour: b.colour, name: b.bar, group: g, badge, price, flag, boards, roofMat, glass,
       staff: [], queue: [], leavers: [], staffCount: 0, pop: 0, boarded: false, front: new THREE.Vector3(0, 0, 1).applyEuler(g.rotation) };
     g.scale.setScalar(0.01);
     return bar;
@@ -430,10 +729,8 @@ export class Beach {
     while (bar.staff.length < n) {
       const i = bar.staff.length;
       const f = figure({ shirt: '#ffffff', shorts: '#334155', scale: 0.92 });
-      // apron in the bar's colour
-      const apron = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.4, 0.2), toon(bar.colour)); apron.position.set(0, 2.0, 0.85); f.add(apron);
+      const apron = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.4, 0.2), toon(bar.colour)); apron.position.set(0, 2.0, 0.85); f.userData.torso.add(apron);
       f.position.set(-3.4 + (i % 4) * 2.3, 0.3, i < 4 ? 0.8 : -1.2);
-      f.userData.pop = 0;
       bar.group.add(f); bar.staff.push(f);
     }
     while (bar.staff.length > n) bar.group.remove(bar.staff.pop());
@@ -448,17 +745,27 @@ export class Beach {
     if (out) { this.setStaff(bar, 0); this.setQueue(bar, 0); bar.price.visible = false; }
   }
 
-  setQueue(bar, n) {
+  /** Queue length follows the sales script. People leaving the front walk off with a drink; with `toVan`,
+   *  people leave from the back and head for the juice van instead. */
+  setQueue(bar, n, toVan = false) {
     while (bar.queue.length < n) {
       const i = bar.queue.length;
-      const f = figure({ shirt: bar.colour, shorts: ['#123c4a', '#1f2937', '#ffffff'][i % 3], scale: 0.9 });
-      f.userData.pop = 0; f.userData.slotIdx = i;
+      const f = figure({ shirt: bar.colour, shorts: ['#123c4a', '#1f2937', '#ffffff'][i % 3], scale: 0.9, eyes: false });
+      f.userData.pop = 0;
       this.scene.add(f); bar.queue.push(f);
     }
     while (bar.queue.length > n) {
+      if (toVan) {
+        const f = bar.queue.pop();
+        const k = this.defectors.length;
+        // two huddles, one each side of the van, so the TV can see them
+        const sideK = k % 2 ? 1 : -1, j = Math.floor(k / 2);
+        f.userData.van = { spot: new THREE.Vector3(this.vanPark.x + sideK * (9.5 + (j % 3) * 2.2 + (Math.random() - 0.5) * 0.6), 0, this.vanPark.z - 3 + Math.floor(j / 3) * 2.3 + (Math.random() - 0.5) * 0.6) };
+        this.defectors.push(f);
+        continue;
+      }
       const f = bar.queue.shift();
-      // the front customer walks off with a drink
-      const drink = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.7, 10), toon(bar.colour)); drink.rotation.x = Math.PI; drink.position.set(0.9, 3, 0.7); f.add(drink);
+      const drink = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.7, 10), toon(bar.colour)); drink.rotation.x = Math.PI; drink.position.set(0.9, 3, 0.7); f.userData.torso.add(drink);
       const dir = bar.front.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2.2);
       f.userData.leave = { dir, t: 0 };
       bar.leavers.push(f);
@@ -471,7 +778,7 @@ export class Beach {
     return new THREE.Vector3(p.x + f.x * d + side.x * Math.sin(i * 1.7) * 0.7, 0, p.z + f.z * d + side.z * Math.sin(i * 1.7) * 0.7);
   }
 
-  // ---------------------------------------------------------------- weather
+  // ---------------------------------------------------------------- weather and fixture
   setWeather(type, instant = false) {
     this.weatherType = type;
     this.lookTarget = LOOKS[type];
@@ -479,16 +786,42 @@ export class Beach {
     this.rain.visible = !!LOOKS[type].rain;
     this.cloudMat.color.set(LOOKS[type].cloudCol);
     this.sun.material.color.set(LOOKS[type].sunCol);
-    this.spectators.forEach(f => f.userData.shirtMesh.material = toon(type === 'cool' || type === 'storm' ? f.userData.jumper : f.userData.shirt));
+    const cold = type === 'cool' || type === 'storm';
+    this.spectators.forEach(f => f.userData.setShirt(cold ? f.userData.jumper : f.userData.shirt));
+    this.life.filter(g => g.userData.kind === 'walker').forEach(g => g.userData.walk.f.userData.setShirt(cold ? g.userData.walk.jumper : g.userData.walk.shirt));
     if (instant || REDUCED) this.look = { ...LOOKS[type] };
     document.documentElement.style.setProperty('--sky-top', LOOKS[type].top);
     document.documentElement.style.setProperty('--sky-bot', LOOKS[type].bot);
+  }
+  /** The week's fixture: the court and the stands only appear on match days. */
+  setFixture(fixture) {
+    this.fixture = fixture || null;
+    const match = !!fixture?.match;
+    this.vb.setMatch(match ? fixture : null);
+    this.finalProps.visible = match && fixture.stage === 'final';
+  }
+
+  /** How many of each kind of beachgoer, and how full the stands are, for this weather and fixture. */
+  crowdTargets() {
+    const L = LOOKS[this.weatherType], match = !!this.fixture?.match;
+    const storming = this.weatherType === 'storm' && this.day;
+    const p = storming ? 0 : L.people;
+    const counts = {
+      towel: Math.round(29 * Math.min(1, p * (match ? 0.75 : 0.85))),
+      pair: Math.round(4 * Math.min(1, p * 1.1)),
+      frisbee: Math.round(2 * Math.min(1, p * 1.5)),
+      castle: Math.round(4 * Math.min(1, p)),
+      swimmer: Math.round(16 * Math.min(1, p * 0.85)),
+      walker: storming ? 0 : Math.round(8 * (this.weatherType === 'storm' ? 0.15 : this.weatherType === 'cool' ? 1 : this.weatherType === 'cloud' ? 0.8 : 0.4)),
+    };
+    const stands = match ? Math.min(1, L.crowd * STAGE_CROWD[this.fixture.stage || 'league']) : 0;
+    return { counts, stands: storming ? 0 : stands };
   }
 
   // ---------------------------------------------------------------- the day
   /** Start playing the day script. now() returns server time; startAt is when the script's t = 0. */
   playDay(script, startAt, now, hooks = {}) {
-    this.day = { script, startAt, now, hooks, served: {}, chimes: [], chimeIdx: 0, eventFired: false, scoreIdx: 0 };
+    this.day = { script, startAt, now, hooks, served: {}, chimes: [], chimeIdx: 0, eventFired: false };
     const total = script.bars.reduce((s, b) => s + b.saleTimesMs.length, 0);
     const n = total ? Math.min(12, Math.max(1, Math.round(total / 8))) : 0;
     for (let i = 0; i < n; i++) this.day.chimes.push(1000 + (12000 * (i + 0.5)) / n);
@@ -499,14 +832,17 @@ export class Beach {
       bar.price = labelSprite(`${b.price}p`, { bg: '#1f2937', fg: '#fde68a', size: 72, scale: 0.042 }); bar.price.position.set(-6.2, 2.6, 5.4);
       bar.price.visible = false; bar.price.userData.pop = 0; bar.group.add(bar.price);
     }
-    this.sport.startMatch(script.fixture, script);
-    this.finalProps.visible = script.fixture.big === 'Beach Cup Final';
+    this.setFixture(script.fixture);
+    this.vb.startMatch(script.fixture);
   }
-  stopDay() { this.day = null; this.sport.idle(); this.van.visible = false; this.gulls.forEach(g => g.visible = false); }
+  stopDay() {
+    this.day = null; this.vb.endMatch(); this.van.visible = false; this.gulls.forEach(g => g.visible = false);
+    for (const f of this.defectors) this.scene.remove(f);
+    this.defectors = [];
+  }
   hidePrices() { this.bars.forEach(b => b && (b.price.visible = false)); }
-  setFixture(fixture) { if (fixture) { this.sport.setSport(fixture.sport, fixture); this.finalProps.visible = fixture.big === 'Beach Cup Final'; } }
 
-  /** What the TV overlays need each frame: per-bar served counts and screen positions. */
+  /** What the TV overlays need each frame: per-bar served counts. */
   dayState() {
     if (!this.day) return null;
     const t = this.day.now() - this.day.startAt;
@@ -533,25 +869,47 @@ export class Beach {
     for (const key of ['sun', 'sunSize', 'clouds', 'light', 'hemi', 'warm']) L[key] += (T[key] - L[key]) * k;
     this.sunLight.intensity = L.light; this.hemi.intensity = L.hemi;
     this.sunLight.color.set(L.warm > 0.5 ? '#ffd9a8' : '#fff4dd');
-    this.sun.material.opacity = L.sun; this.sun.scale.setScalar(L.sunSize * 2.6);
-    this.cloudMat.opacity = 0.15 + 0.8 * L.clouds;
+    this.sun.material.opacity = L.sun; this.sun.scale.setScalar(L.sunSize * 7);
+    this.glitter.material.opacity = L.sun * 0.75;
+    this.cloudMat.opacity = 0.35 + 0.6 * L.clouds;
     this.scene.fog.color.set(T.bot);
-    this.clouds.forEach((c, i) => { c.visible = L.clouds > 0.05 || i % 4 === 0; c.position.x += dt * c.userData.speed * (REDUCED ? 0.3 : 1); if (c.position.x > 230) c.position.x = -230; });
+    const slow = REDUCED ? 0.3 : 1;
+    this.clouds.forEach(c => { c.visible = c.userData.order < 0.35 + L.clouds * 0.65; c.position.x += dt * c.userData.speed * slow; if (c.position.x > 1600) c.position.x = -1600; });
 
-    // sea: three layers of rolling waves
+    // sea: three layers of rolling waves, the water texture drifting slowly
     const calm = REDUCED ? 0.35 : 1, rough = (T.whitecaps ? 1.6 : 1) * calm;
     const pos = this.seaGeo.attributes.position, base = this.seaBase;
     for (let i = 0; i < pos.count; i++) {
       const x = base[i * 3], z = base[i * 3 + 2];
-      pos.setY(i, base[i * 3 + 1] + (Math.sin(x * 0.05 + t * 0.9 + z * 0.12) * 0.35 + Math.sin(x * 0.11 - t * 1.3) * 0.18 + Math.sin(z * 0.2 + t * 1.7) * 0.22) * rough);
+      const near = Math.max(0, 1 - (SHORE - z) / 220);
+      pos.setY(i, base[i * 3 + 1] + (Math.sin(x * 0.05 + t * 0.9 + z * 0.12) * 0.35 + Math.sin(x * 0.11 - t * 1.3) * 0.18 + Math.sin(z * 0.2 + t * 1.7) * 0.22) * rough * (0.3 + near * 0.7));
     }
     pos.needsUpdate = true;
-    this.foam.position.z = -33 + Math.sin(t * 0.8) * 1.4 * calm;
+    this.waterTex.offset.set(t * 0.004 * slow, t * 0.012 * slow);
+    this.farTex.offset.set(t * 0.002 * slow, t * 0.004 * slow);
+    this.foam.position.z = SHORE - 1 + Math.sin(t * 0.8) * 1.4 * calm;
     this.foam.material.opacity = 0.7 + Math.sin(t * 0.8) * 0.25;
-    this.crests.forEach(c => { const f = (t / 7 + c.userData.phase) % 1; c.position.set(0, -0.1, -75 + f * 40); c.material.opacity = Math.sin(f * Math.PI) * 0.6 * (T.whitecaps ? 1 : 0.7); });
+    this.crests.forEach(c => { const f = (t / 7 + c.userData.phase) % 1; c.position.set(0, -0.1, SHORE - 42 + f * 40); c.material.opacity = Math.sin(f * Math.PI) * 0.6 * (T.whitecaps ? 1 : 0.7); });
 
-    // palms sway, flags ripple
-    for (const p of [this.palm, this.palm2]) p.userData.top && (p.userData.top.rotation.z = Math.sin(t * 0.9) * 0.05 * rough);
+    // ship, sailboat and the banner plane
+    this.ship.position.x += dt * this.ship.userData.speed * slow; if (this.ship.position.x > 900) this.ship.position.x = -900;
+    this.ship.position.y = Math.sin(t * 0.6) * 0.4;
+    this.sail.position.x += dt * this.sail.userData.speed * slow; if (this.sail.position.x < -450) this.sail.position.x = 450;
+    this.sail.rotation.z = Math.sin(t * 0.9) * 0.05 * rough; this.sail.position.y = Math.sin(t * 1.1) * 0.6 * rough;
+    this.ship.visible = this.weatherType !== 'storm'; this.sail.visible = this.weatherType !== 'storm';
+    if (!this.plane.visible && (this.nextPlane -= dt) < 0 && this.weatherType !== 'storm' && !REDUCED) {
+      this.plane.visible = true; this.plane.position.set(-1100, 150 + Math.random() * 40, -1100 - Math.random() * 200);
+    }
+    if (this.plane.visible) {
+      this.plane.position.x += dt * 70;
+      const bn = this.plane.userData.banner, bp = bn.geometry.attributes.position, bb = bn.userData.base;
+      for (let i = 0; i < bp.count; i++) bp.setZ(i, Math.sin(bb[i * 3] * 0.35 - t * 9) * 0.9 * (1 - (bb[i * 3] + 22) / 44));
+      bp.needsUpdate = true;
+      if (this.plane.position.x > 1100) { this.plane.visible = false; this.nextPlane = 35 + Math.random() * 30; }
+    }
+
+    // palms sway, flags ripple, bars pop in
+    for (const p of this.palms) p.userData.top && (p.userData.top.rotation.z = Math.sin(t * 0.9 + p.position.x) * 0.05 * rough);
     for (const bar of this.bars) {
       if (!bar) continue;
       bar.pop = Math.min(1, bar.pop + dt * 1.8);
@@ -560,14 +918,21 @@ export class Beach {
       const fg = bar.flag.geometry.attributes.position, fb = bar.flag.userData.base;
       for (let i = 0; i < fg.count; i++) { const x = fb[i * 3]; fg.setZ(i, Math.sin(x * 1.4 - t * 5) * 0.25 * x / 3.4 * rough); }
       fg.needsUpdate = true;
-      bar.staff.forEach((f, i) => { animateFigure(f, t, { bounce: this.mode === 'planning' ? 0.18 : 0.08 }); f.rotation.y = Math.sin(t * 1.3 + i) * (this.mode === 'planning' ? 0.6 : 0.2); });
+      bar.staff.forEach((f, i) => {
+        // busy behind the counter: shaking cocktails while planning or serving
+        const busy = this.mode === 'planning' || this.day;
+        animateFigure(f, t, { bounce: busy ? 0.18 : 0.08, arms: false, dt });
+        const shake = busy ? Math.sin(t * 14 + i) * 0.35 : 0;
+        poseArms(f, [busy ? -1.9 + shake : 0, busy ? -1.9 - shake : 0], [-0.2, 0.2], dt, 18);
+        f.rotation.y = Math.sin(t * 1.3 + i) * (busy ? 0.35 : 0.2);
+      });
     }
 
     // rain and lightning
     if (this.rain.visible) {
       const rp = this.rain.geometry.attributes.position;
       for (let i = 0; i < rp.count; i += 2) {
-        let y = rp.getY(i) - dt * 70; if (y < 0) y += 70;
+        let y = rp.getY(i) - dt * 70; if (y < 0) y += 80;
         rp.setY(i, y); rp.setY(i + 1, y - 2.4);
       }
       rp.needsUpdate = true;
@@ -576,71 +941,128 @@ export class Beach {
     if (this.flash > 0) { this.flash = Math.max(0, this.flash - dt * 4); this.hemi.intensity = L.hemi + this.flash * 2.2; }
 
     this.updateDay(t, dt);
-
-    // spectators
-    const storm = this.day && this.weatherType === 'storm';
-    const cheer = this.sport.cheer;
-    this.spectators.forEach((f, i) => {
-      const u = f.userData;
-      if (storm) {
-        const away = new THREE.Vector3(Math.sign(u.home.x || 1) * 120, 0, 60);
-        const d = away.sub(f.position); const run = d.length() > 1;
-        if (run) { d.normalize(); f.position.addScaledVector(d, dt * 14); f.rotation.y = Math.atan2(d.x, d.z); }
-        animateFigure(f, t, { walk: run ? 1 : 0 });
-      } else {
-        const d = u.home.clone().sub(f.position);
-        if (d.length() > 0.3) { f.position.addScaledVector(d.normalize(), dt * 14); animateFigure(f, t, { walk: 1 }); f.rotation.y = Math.atan2(d.x, d.z); }
-        else { f.lookAt(this.sport.ballPos.x, 0, this.sport.ballPos.z); animateFigure(f, t, { cheer: cheer * ((i % 3) ? 1 : 0.5) }); }
-      }
-    });
-    this.sunbathers.children.forEach((g, i) => { g.visible = !storm; const f = g.userData.figure; f.position.y = 0.85 + Math.sin(t * 1.5 + i) * 0.03; });
-
-    this.sport.update(t, dt, storm ? 'storm' : this.day ? 'play' : 'idle', this.day ? this.day.now() - this.day.startAt : 0);
+    this.updatePeople(t, dt);
+    const storming = this.day && this.weatherType === 'storm';
+    this.vb.update(t, dt, { storm: storming, ms: this.day ? this.day.now() - this.day.startAt : 0 });
 
     // camera: gentle drift, slow orbit in the lobby, pull back for results, nudge toward events
     this.camNudge.lerp(this.camNudgeTarget, 1 - Math.exp(-dt * 1.5));
     this.pull += (this.pullTarget - this.pull) * (1 - Math.exp(-dt * 1.5));
     if (this.mode === 'lobby' && !REDUCED) this.orbit += dt * 0.08; else this.orbit *= Math.exp(-dt * 1.2);
-    const drift = REDUCED ? 0 : 1.6;
-    const ang = Math.sin(this.orbit) * 0.32;
-    const cb = this.camBase.clone().sub(this.lookBase).applyAxisAngle(new THREE.Vector3(0, 1, 0), ang).add(this.lookBase);
-    cb.y += this.pull * 5; cb.z += this.pull * 7;
-    this.camera.position.set(cb.x + Math.sin(t * 0.21) * drift + this.camNudge.x * 0.4, cb.y + Math.sin(t * 0.17) * drift * 0.5, cb.z + Math.cos(t * 0.13) * drift);
-    this.camera.lookAt(this.lookBase.x + this.camNudge.x, this.lookBase.y, this.lookBase.z + this.camNudge.z);
+    const drift = REDUCED ? 0 : 1.4;
+    const ang = Math.sin(this.orbit) * 0.22;
+    const pivot = new THREE.Vector3(0, 0, 0);
+    const cb = this.camBase.clone().sub(pivot).applyAxisAngle(new THREE.Vector3(0, 1, 0), ang).add(pivot);
+    const lb = this.lookBase.clone().sub(pivot).applyAxisAngle(new THREE.Vector3(0, 1, 0), ang).add(pivot);
+    cb.y += this.pull * 4; cb.z += this.pull * 6;
+    this.camera.position.set(cb.x + Math.sin(t * 0.21) * drift + this.camNudge.x * 0.4, cb.y + Math.sin(t * 0.17) * drift * 0.5, cb.z + Math.cos(t * 0.13) * drift + this.camNudge.z * 0.3);
+    this.camera.lookAt(lb.x + this.camNudge.x, lb.y, lb.z + this.camNudge.z);
 
     this.renderer.render(this.scene, this.camera);
   }
 
+  /** Beachgoers and spectators come and go with the weather and the fixture; each pops in or out. */
+  updatePeople(t, dt) {
+    const { counts, stands } = this.crowdTargets();
+    const match = !!this.fixture?.match;
+    // pick the first N of each kind by order, skipping spots the court takes up on match days
+    const want = new Set();
+    const byKind = {};
+    for (const g of this.life) (byKind[g.userData.kind] ||= []).push(g);
+    for (const [kind, list] of Object.entries(byKind)) {
+      const eligible = list.filter(g => !(match && g.userData.central)).sort((a, b) => a.userData.order - b.userData.order);
+      eligible.slice(0, counts[kind] || 0).forEach(g => want.add(g));
+    }
+    const pop = (g, on) => {
+      const u = g.userData;
+      u.vis = Math.max(0, Math.min(1, u.vis + (on ? dt * 1.6 : -dt * 2.2)));
+      g.visible = u.vis > 0.001;
+      if (g.visible) g.scale.setScalar(u.base * (on ? easeOutBack(u.vis) : u.vis));
+      return g.visible;
+    };
+    for (const g of this.life) {
+      if (!pop(g, want.has(g))) continue;
+      const u = g.userData;
+      if (u.kind === 'towel') { const f = u.figure; f.position.y = 0.85 + Math.sin(t * 1.5 + u.order * 9) * 0.03; }
+      else if (u.kind === 'pair' || u.kind === 'frisbee') {
+        const P = u.pair, period = P.type === 'bat' ? 1.1 : 1.7, ph = (t + P.phase) / period, leg = Math.floor(ph), f = ph - leg;
+        const from = leg % 2 ? P.b : P.a, to = leg % 2 ? P.a : P.b;
+        P.ball.position.set(from.position.x + (to.position.x - from.position.x) * f, (P.type === 'bat' ? 3.2 : 2.6) + Math.sin(f * Math.PI) * (P.type === 'bat' ? 4 : 1.2), Math.sin(f * Math.PI) * 0.5);
+        if (P.type === 'frisbee') P.ball.rotation.y += dt * 12;
+        for (const [fig, hitting] of [[P.a, leg % 2 === 0 && f < 0.25], [P.b, leg % 2 === 1 && f < 0.25]]) {
+          animateFigure(fig, t, { arms: false, bounce: 0.12, dt });
+          const catching = (fig === to && f > 0.75);
+          poseArms(fig, [0, hitting ? -2.4 + f * 6 : catching ? -1.4 : -0.5], [-0.15, 0.15], dt, 16);
+        }
+      } else if (u.kind === 'castle') {
+        const kid = u.kid; animateFigure(kid, t, { arms: false, bounce: 0.04, dt });
+        poseArms(kid, [-1.2 + Math.sin(t * 5) * 0.4, -0.9 - Math.sin(t * 5) * 0.4], [-0.1, 0.1], dt);
+      } else if (u.kind === 'swimmer') {
+        const s = u.swim; s.f.position.y = -2.3 + Math.sin(t * 1.4 + s.phase) * 0.25;
+        poseArms(s.f, [-2.4 + Math.sin(t * 2 + s.phase) * 0.6, -2.4 - Math.sin(t * 2 + s.phase) * 0.6], [-0.4, 0.4], dt, 6);
+        g.position.x += Math.sin(t * 0.2 + s.phase) * dt * 0.4;
+      } else if (u.kind === 'walker') {
+        const w = u.walk;
+        g.position.x += w.speed * dt;
+        if (g.position.x > 120) w.speed = -Math.abs(w.speed); if (g.position.x < -120) w.speed = Math.abs(w.speed);
+        g.rotation.y = w.speed > 0 ? Math.PI / 2 : -Math.PI / 2;
+        animateFigure(w.f, t, { walk: 1, dt });
+      }
+    }
+    // the stands: the first N spectators by order, N set by the weather and the stage of the competition
+    const n = Math.round(this.spectators.length * stands);
+    const storm = this.day && this.weatherType === 'storm';
+    const cheer = this.vb.cheer;
+    this.spectators.forEach((f, i) => {
+      const u = f.userData, on = i < n || (storm && u.vis > 0);
+      if (!pop(f, on && !(storm && u.fled))) return;
+      if (storm) {
+        const away = new THREE.Vector3(Math.sign(u.home.x || 1) * 130, 0, 70);
+        const d = away.sub(f.position); const run = d.length() > 1;
+        if (run) { d.normalize(); f.position.addScaledVector(d, dt * 14); f.rotation.y = Math.atan2(d.x, d.z); } else u.fled = true;
+        animateFigure(f, t, { walk: run ? 1 : 0, dt });
+      } else {
+        u.fled = false;
+        const d = u.home.clone().sub(f.position);
+        if (d.length() > 0.3) { f.position.addScaledVector(d.normalize(), dt * 14); animateFigure(f, t, { walk: 1, dt }); f.rotation.y = Math.atan2(d.x, d.z); }
+        else { f.lookAt(this.vb.ball.position.x, 0, this.vb.ball.position.z); animateFigure(f, t, { cheer: cheer * ((i % 3) ? 1 : 0.5), dt }); }
+      }
+    });
+  }
+
   updateDay(t, dt) {
     const day = this.day;
-    // bars' queues follow the script; with no day running, the beach is calm
+    const st = day ? day.now() - day.startAt : 0;
+    const ev = day?.script.event;
+    const vanOn = ev?.type === 'van' && st >= ev.atMs;
+    // bars' queues follow the script; while the juice van is out, the back of each queue drifts over to it
     for (const bar of this.bars) {
       if (!bar) continue;
       let qn = 0;
       if (day && !bar.boarded) {
         const b = day.script.bars.find(x => x.slot === bar.slot);
-        const st = day.now() - day.startAt;
         if (b) {
           const sold = b.saleTimesMs.length, served = b.saleTimesMs.filter(x => x <= st).length, rem = sold - served;
           qn = sold === 0 ? 0 : rem > 0 ? Math.max(1, Math.ceil(rem / Math.max(1, sold / 6))) : 0;
+          if (vanOn && this.vanParked && qn > 1) qn = Math.max(1, Math.ceil(qn * 0.45));
           if (served > (day.served[bar.slot] || 0)) day.hooks.onSale?.(bar.slot, served);
           day.served[bar.slot] = served;
           if (st > 300 && !bar.price.visible) { bar.price.visible = true; bar.price.userData.pop = 0; }
         }
       }
-      if (bar.queue.length !== qn) this.setQueue(bar, qn);
+      if (bar.queue.length !== qn) this.setQueue(bar, qn, vanOn && this.vanParked);
       bar.queue.forEach((f, i) => {
         const target = this.queueSpot(bar, i);
         const d = target.sub(f.position); const dist = d.length();
         if (f.userData.pop === 0) { f.position.copy(this.queueSpot(bar, i).add(bar.front.clone().multiplyScalar(22)).add(new THREE.Vector3((Math.random() - 0.5) * 10, 0, 0))); }
         f.userData.pop = Math.min(1, f.userData.pop + dt * 2);
-        if (dist > 0.2) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 12)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1 }); }
-        else { f.lookAt(bar.group.position.x, 0, bar.group.position.z); animateFigure(f, t, { bounce: 0.1 }); }
+        if (dist > 0.2) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 12)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); }
+        else { f.lookAt(bar.group.position.x, 0, bar.group.position.z); animateFigure(f, t, { bounce: 0.1, dt }); }
       });
       bar.leavers = bar.leavers.filter(f => {
         const L = f.userData.leave; L.t += dt;
         f.position.addScaledVector(L.dir, dt * 10); f.rotation.y = Math.atan2(L.dir.x, L.dir.z);
-        animateFigure(f, t, { walk: 1 });
+        animateFigure(f, t, { walk: 1, dt });
         const s = f.userData.baseScale * Math.max(0, 1 - Math.max(0, L.t - 1.2) / 0.6);
         f.scale.setScalar(s);
         if (L.t > 1.8) { this.scene.remove(f); return false; }
@@ -648,27 +1070,34 @@ export class Beach {
       });
       if (bar.price.visible) { bar.price.userData.pop = Math.min(1, (bar.price.userData.pop || 0) + dt * 3); const p = bar.price.userData.pop; const base = bar.price.userData.base ||= bar.price.scale.clone(); bar.price.scale.copy(base).multiplyScalar(p < 1 ? 1 + Math.sin(p * Math.PI) * 0.3 : 1); }
     }
-    if (!day) { this.camNudgeTarget.set(0, 0, 0); return; }
-    const st = day.now() - day.startAt;
-    while (day.chimeIdx < day.chimes.length && st >= day.chimes[day.chimeIdx]) { day.chimeIdx++; day.hooks.onChime?.(); }
-    const ev = day.script.event;
-    // events
-    this.van.visible = false; this.gulls.forEach(g => g.visible = false);
+    // customers who defected walk over and crowd round the van
+    for (const f of this.defectors) {
+      const d = f.userData.van.spot.clone().sub(f.position), dist = d.length();
+      if (dist > 0.3) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 13)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); }
+      else { f.lookAt(this.van.position.x, 0, this.van.position.z); animateFigure(f, t, { cheer: 0.3, dt }); }
+    }
+    this.van.visible = false; this.gulls.forEach(g => g.visible = false); this.vanParked = false;
     this.camNudgeTarget.set(0, 0, 0);
+    if (!day) return;
+    while (day.chimeIdx < day.chimes.length && st >= day.chimes[day.chimeIdx]) { day.chimeIdx++; day.hooks.onChime?.(); }
     if (ev && st >= ev.atMs) {
-      if (!day.eventFired) { day.eventFired = true; day.hooks.onEvent?.(ev); this.sport.onEvent(ev.type); }
+      if (!day.eventFired) { day.eventFired = true; day.hooks.onEvent?.(ev); this.vb.onEvent(ev.type); }
       const et = (st - ev.atMs) / 1000;
       if (ev.type === 'van') {
+        // drives in along the front of the beach and parks between the two front bars, hatch to the beach
         this.van.visible = true;
-        const x = Math.min(29, -120 + et * 45);      // parks between the scoreboard and the back-right bar
-        this.van.position.set(x, 0, -23); this.van.rotation.y = 0;
-        this.van.children.slice(3, 7).forEach(w => w.rotation.y = 0);
-        this.camNudgeTarget.set(x * 0.25, 0, -4);
+        this.vanPark = { x: 0, z: 34 };
+        const x = Math.min(this.vanPark.x, -130 + et * 55);
+        this.van.position.set(x, 0, this.vanPark.z); this.van.rotation.y = 0;
+        this.vanWheels.forEach(w => w.rotation.y = x < this.vanPark.x ? -et * 8 : 0);
+        this.vanParked = x >= this.vanPark.x;
+        animateFigure(this.vendor, t, { cheer: this.vanParked ? 0.5 : 0, dt });
+        this.camNudgeTarget.set(x * 0.15, 0, 6);
       }
       if (ev.type === 'gulls' && et < 7) {
         this.gulls.forEach((g, i) => {
           g.visible = true;
-          const a = et * 1.4 + (i / 7) * Math.PI * 2, swoop = Math.max(0, Math.sin(et * 1.8 + i)) ;
+          const a = et * 1.4 + (i / 7) * Math.PI * 2, swoop = Math.max(0, Math.sin(et * 1.8 + i));
           const r = 22 + Math.sin(i * 3) * 8;
           g.position.set(Math.cos(a) * r * 1.6, 22 - swoop * 15 + Math.sin(et * 3 + i) * 1.5, Math.sin(a) * r * 0.7);
           g.rotation.y = -a - Math.PI / 2; g.rotation.z = -swoop * 0.5;
@@ -680,8 +1109,7 @@ export class Beach {
   }
 
   qualityCheck(dt) {
-    // quality tiers: drop shadows, then resolution, if the frame rate sags
-    // measured over the last two seconds, whatever the frame rate
+    // quality tiers: drop resolution, then shadows, if the frame rate sags (measured over the last two seconds)
     this.frames.push(dt);
     let sum = this.frames.reduce((a, b) => a + b, 0);
     while (sum > 2 && this.frames.length > 1) sum -= this.frames.shift();

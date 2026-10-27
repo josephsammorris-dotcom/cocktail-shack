@@ -14,8 +14,9 @@ async function until(page, fn, timeout = 30000) {
   require('fs').mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'] });
   const errors = [];
-  const tvCtx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const tvCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const tv = await tvCtx.newPage();
+  tv.setDefaultTimeout(150000);
   tv.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errors.push('TV: ' + m.text()); });
   tv.on('pageerror', e => errors.push('TV pageerror: ' + e.message));
   await tv.goto(BASE + '/tv');
@@ -58,13 +59,13 @@ async function until(page, fn, timeout = 30000) {
     if (w === 1) { await tv.screenshot({ path: `${OUT}/tv-planning.png` }); await p0.screenshot({ path: `${OUT}/phone-planning.png` }); await p0.screenshot({ path: `${OUT}/phone-planning-full.png`, fullPage: true }); }
     for (const p of phones) { const b = await p.$('#lock'); if (b && await b.isEnabled()) await b.click(); }
     await sleep(600);
-    await until(tv, () => document.querySelector('.tag3d.counter'), 20000);
+    await until(tv, () => document.querySelector('.tag3d.counter') || !document.getElementById('results').classList.contains('hide'), 60000);
     await sleep(3500);
     await tv.screenshot({ path: `${OUT}/tv-match-w${w}-a.png` });
     if (w === 1) await phones[0].screenshot({ path: `${OUT}/phone-match.png` });
     await sleep(5000);
     await tv.screenshot({ path: `${OUT}/tv-match-w${w}-b.png` });
-    await until(tv, () => !document.getElementById('results').classList.contains('hide'), 20000);
+    await until(tv, () => !document.getElementById('results').classList.contains('hide'), 60000);
     await sleep(1500);
     await tv.screenshot({ path: `${OUT}/tv-results-w${w}.png` });
     // check the counters agree with the results

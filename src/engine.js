@@ -27,7 +27,13 @@ export const C = {
   loanInterest: 0.25,
   loanRepay: 0.5,
   loanThreshold: 8,
-  bigMatch: 1.2,
+  // crowd by fixture (replaces the handbook's single 1.2 Big Match multiplier)
+  crowdByStage: { none: 0.7, league: 1.0, semi: 1.25, final: 1.5 },
+  // attendance = (base + range × U) × (1 + perPlayer × (N − 1)); retuned from the handbook's 90 + 140U and 0.25
+  // so sell-outs are rare: a typical bar sees 30–45 thirsty customers on a sunny league day
+  crowdBase: 52, crowdRange: 28, crowdPerPlayer: 0.45,
+  // the season builds: week 1 has 70% of the crowd, rising 7.5 points a week to full strength by week 5
+  seasonStart: 0.7, seasonStep: 0.075,
   maxPlayers: 4,
   nameMax: 14,
 };
@@ -62,13 +68,14 @@ const WEATHER_POOL = ['sunny', 'scorcher', 'cloud', 'cool', 'storm', 'sunny', 's
 export const EVENTS = {
   van:   { mult: 0.45, banner: "A rival juice van has pulled up on the sand and pinched half of everyone's customers!" },
   gulls: { mult: 0.15, banner: 'A mob of seagulls has raided the beach, and the crowd has scattered!' },
-  extra: { mult: 1.60, banner: 'The match went to {x}, and the crowd is gasping for a cold one!' },
+  extra: { mult: 1.60, banner: 'The match went to a third set, and the crowd is gasping for a cold one!',
+           bannerNoMatch: 'A beach party has kicked off, and everyone is gasping for a cold one!' },
   storm: { mult: 1.00, banner: 'A storm rolled in off the sea. The beach all but emptied.' },
 };
 
 // ---------------------------------------------------------------- fixtures (Sections 13, 18)
-export const SPORTS = ['volleyball', 'football', 'frisbee', 'rugby'];
-export const SPORT_NAMES = { volleyball: 'Beach Volleyball', football: 'Beach Football', frisbee: 'Ultimate Frisbee', rugby: 'Beach Rugby', cricket: 'Beach Cricket' };
+// Beach volleyball only. Not every Saturday has a match: see fixtureFor().
+export const STAGE_NAMES = { league: 'Beach Volleyball League', semi: 'Beach Cup Semi-final', final: 'Beach Cup Final' };
 export const TEAMS = ['Sandy Cove', 'Palm Bay', 'Coral Point', 'Driftwood', 'Laguna Rocks', 'Sunset Strip',
   'Pelican Key', 'Tidewater', 'Shell Harbour', 'Breaker Bay', 'Mango Reef', 'Saltwind'];
 
@@ -103,7 +110,8 @@ export function priceFactor(p, k, m) {
   return Math.max(0, 1 - (p - fair) / (3.84 * k));
 }
 
-export function attendance(U, N) { return (90 + 140 * U) * (1 + 0.25 * (N - 1)); }
+export const seasonFactor = w => Math.min(1, C.seasonStart + C.seasonStep * (w - 1));
+export function attendance(U, N) { return (C.crowdBase + C.crowdRange * U) * (1 + C.crowdPerPlayer * (N - 1)); }
 
 /**
  * Split one crowd between bars.
@@ -256,15 +264,21 @@ export function startGame(g) {
   return true;
 }
 
+/** The season's fixture list: league matches on even weeks, then the semi-final and the final in the last two weeks. */
+export function stageFor(weeks, w, bigMatch = true) {
+  if (w === weeks) return bigMatch ? 'final' : 'league';
+  if (w === weeks - 1) return bigMatch ? 'semi' : 'league';
+  return w % 2 === 0 ? 'league' : null;
+}
 export function fixtureFor(g, w) {
-  const sport = SPORTS[(w - 1) % SPORTS.length];
-  const away = TEAMS[(w - 1) % TEAMS.length];
-  let big = null;
-  if (g.settings.bigMatch) {
-    if (w === g.settings.weeks) big = 'Beach Cup Final';
-    else if (w === Math.floor(g.settings.weeks / 2)) big = 'Cup Semi-final';
-  }
-  return { sport, sportName: SPORT_NAMES[sport], away, big };
+  const stage = stageFor(g.settings.weeks, w, g.settings.bigMatch);
+  const crowd = C.crowdByStage[stage || 'none'];
+  if (!stage) return { match: false, stage: null, sport: null, name: 'No match today', away: null, big: null, crowd };
+  // opponents in list order, one per match played so far
+  let n = 0; for (let i = 1; i < w; i++) if (stageFor(g.settings.weeks, i, g.settings.bigMatch)) n++;
+  const away = TEAMS[n % TEAMS.length];
+  const big = stage === 'semi' || stage === 'final' ? STAGE_NAMES[stage] : null;
+  return { match: true, stage, sport: 'volleyball', sportName: 'Beach Volleyball', name: STAGE_NAMES[stage], away, big, crowd };
 }
 
 /** Briefing: draw the real weather and the forecast (draws 1 and 2), set the fixture, prefill plans. */
@@ -396,11 +410,12 @@ export function botPlan(g, p) {
   const n = g.players.length;
   const k = g.mixCost;
   // expected buyers at a typical day, split between the bars
-  const B = attendance(0.5, n) * w.crowd * w.thirst * (g.fixture?.big ? C.bigMatch : 1);
+  const B = attendance(0.5, n) * seasonFactor(g.week) * w.crowd * w.thirst * (g.fixture?.crowd ?? 1);
   const price = Math.max(k + 1, Math.round(2.4 * k + (g.forecast === 'scorcher' ? 3 : 0)));
   const ads = p.cash > 400 ? 4 : p.cash > 150 ? 2 : 1;
   const share = 1.4 / (1 + 1.4 * n);
-  let drinks = Math.round(B * share * 0.9);
+  // stocks a little above the expected crowd: margins are high, so a few spare cocktails beat a sell-out
+  let drinks = Math.round(B * share * 1.25);
   // grow the crew when the crowd outstrips it and the cash is there
   if (drinks > capacity(p) + 10 && p.staff < C.maxStaff && p.staff * C.wage * 3 <= p.cash) hire(g, p);
   return autopilot(g, p, { drinks, ads, price });
@@ -441,9 +456,9 @@ export function resolveDay(g, inject = {}) {
     else if (rngNext(g) < 0.08) event = 'extra';
   }
   const E = event ? EVENTS[event].mult : 1;
-  const M = g.fixture?.big ? C.bigMatch : 1;
+  const M = g.fixture?.crowd ?? 1;
   const A = attendance(U, N);
-  const B = A * W.crowd * W.thirst * M;
+  const B = A * seasonFactor(g.week) * W.crowd * W.thirst * M;
   const k = g.mixCost;
 
   const bars = activePlayers(g);
@@ -484,8 +499,7 @@ export function resolveDay(g, inject = {}) {
     if (eliminated) { p.status = 'out'; p.outWeek = g.week; }
   });
 
-  const banner = event ? EVENTS[event].banner.replace('{x}',
-    g.fixture.sport === 'volleyball' ? 'a third set' : g.fixture.sport === 'football' ? 'extra time' : 'overtime') : null;
+  const banner = event ? (event === 'extra' && !g.fixture.match ? EVENTS.extra.bannerNoMatch : EVENTS[event].banner) : null;
 
   g.fixture.score = makeScore(g);
   const script = buildScript(g, bars, results, event, banner);
@@ -496,12 +510,10 @@ export function resolveDay(g, inject = {}) {
 }
 
 function makeScore(g) {
+  if (!g.fixture.match) return null;
   const r = () => rngNext(g, 'crng');
-  const sport = g.fixture.sport;
-  if (sport === 'volleyball') { const h = r() < 0.55; const close = r() < 0.5; return h ? [2, close ? 1 : 0] : [close ? 1 : 0, 2]; }
-  if (sport === 'football') return [Math.floor(r() * 4), Math.floor(r() * 4)];
-  if (sport === 'frisbee') return [5 + Math.floor(r() * 8), 5 + Math.floor(r() * 8)];
-  return [Math.floor(r() * 5), Math.floor(r() * 5)];
+  const home = r() < 0.55, close = r() < 0.5;            // sets, best of three
+  return home ? [2, close ? 1 : 0] : [close ? 1 : 0, 2];
 }
 
 /** The TV's timeline (Section 13): a timestamp for every sale so the counters always end on `sold`. */

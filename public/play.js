@@ -1,5 +1,5 @@
 // Phone controller (Handbook Section 12). The server is the source of truth; this page only edits a draft and draws.
-import { Conn, money, pence, esc, WEATHER_ICON, SPORT_ICON, FACE, VERDICT_COLOUR, LETTER } from '/net.js';
+import { Conn, money, pence, esc, WEATHER_ICON, FACE, VERDICT_COLOUR, LETTER } from '/net.js';
 
 const $ = id => document.getElementById(id);
 const hdr = $('hdr'), main = $('main'), foot = $('foot');
@@ -118,8 +118,8 @@ function bulletinHTML() {
   const up = (now, prev) => now > prev ? ` <span class="up">▲${now - prev}p</span>` : '';
   return `<div class="bulletin">
       <span class="pill">${WEATHER_ICON[S.forecast] || ''} Forecast: ${esc(S.forecastLabel || '')}</span>
-      ${f ? `<span class="pill">${SPORT_ICON[f.sport] || ''} ${esc(f.sportName)}: Home v ${esc(f.away)}</span>` : ''}
-      ${f?.big ? `<span class="pill big">🏆 ${esc(f.big)}: bigger crowd</span>` : ''}
+      ${f ? (f.match ? `<span class="pill">🏐 ${esc(f.big || 'Volleyball')}: Home v ${esc(f.away)}</span>` : `<span class="pill">🏖️ No match: a quieter beach</span>`) : ''}
+      ${f?.big ? `<span class="pill big">🏆 ${f.stage === 'final' ? 'Biggest crowd of the season' : 'Bigger crowd'}</span>` : ''}
       <span class="pill">🍹 ${c.mixCost}p each${up(c.mixCost, c.prevMixCost)}</span>
       <span class="pill">📣 ${c.adCost}p per ad${up(c.adCost, c.prevAdCost)}</span>
     </div>`;

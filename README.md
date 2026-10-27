@@ -25,7 +25,8 @@ Host keys on the TV: **Enter** start / skip results · **F** full screen · **M*
 | `src/engine.js` | The rules: a pure, seeded, deterministic library. Weather, crowd and sales, staff, loans, bankruptcy, feedback, autopilot, computer bars. Every number is from the handbook. |
 | `src/worker.js` | Cloudflare Worker plus one **Durable Object per room**. The room is the authoritative game server: it runs the phase machine on alarms, validates every command, settles each day with the engine, and sends the TV only public state and each phone only its own private state. |
 | `public/tv.html`, `tv.js` | The TV: overlays for every phase, host controls, and playback of the server's day script. |
-| `public/scene.js`, `sports.js` | The three.js beach: bars with staff and queues, weather looks, events (juice van, seagulls, extra time, storm), and the four fixtures (volleyball, football, frisbee, rugby). |
+| `public/scene.js` | The three.js beach: textured sand and sea out to the horizon, sky, ship, sailboat and banner plane; bars with staff and queues; beachgoers and stands that fill with the weather and the fixture; events (the juice van at the front, seagulls, extra time, storm). |
+| `public/volleyball.js` | Beach volleyball on match days: serve, bump, set and spike rallies on projectile physics, with players who run to where the ball will land, jump to spike and block, and celebrate points. |
 | `public/audio.js` | All sound, generated with the Web Audio API (title riff, till chimes, rain and so on). |
 | `public/play.html`, `play.js` | The phone controller. |
 | `public/net.js` | Shared WebSocket client with reconnection, heartbeat and clock sync. |
@@ -34,8 +35,18 @@ The server settles every day before anything animates, and the TV only plays bac
 so the live counters always finish on the real totals. Phones keep a token in local storage, so a reload or a
 sleeping phone rejoins its seat; a player who misses the planning timer gets an autopilot plan.
 
-Deviations from the handbook, kept small: the four bar positions and the camera are pulled in a little so every
-bar fits a 16:9 TV, and room codes are claimed with a short `/api/new` call before the TV opens its socket.
+Changes from the handbook:
+
+- **Beach volleyball is the only fixture, and not every Saturday has a match.** League matches fall on even weeks,
+  then the Beach Cup semi-final and final take the last two weeks (`stageFor` in `src/engine.js`). On other days the
+  court disappears and the beach fills with sunbathers, swimmers, games and sandcastles, depending on the weather.
+- **The crowd depends on the fixture and the weather.** Buyers are multiplied by 0.7 with no match, 1.0 for a league
+  match, 1.25 for the semi-final and 1.5 for the final (replacing the single 1.2 Big Match multiplier), and the season
+  builds from 70% of the crowd in week 1 to full strength by week 5.
+- **Sell-outs are rarer.** Attendance is 52 + 28U (was 90 + 140U) and grows by 45% per extra player (was 25%), so a
+  typical bar sees 30 to 45 thirsty customers on a sunny league day and the forecast, not luck, decides most days.
+- The four bar positions and the camera are pulled in a little so every bar fits a 16:9 TV, and room codes are claimed
+  with a short `/api/new` call before the TV opens its socket.
 
 ## Developing
 

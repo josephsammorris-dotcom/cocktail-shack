@@ -49,7 +49,6 @@ export class Conn {
 }
 
 export const WEATHER_ICON = { sunny: '☀️', scorcher: '🔥', cloud: '☁️', cool: '🌬️', storm: '⛈️' };
-export const SPORT_ICON = { volleyball: '🏐', football: '⚽', frisbee: '🥏', rugby: '🏉', cricket: '🏏' };
 export const FACE = { good: '😊', mid: '😐', bad: '☹️' };
 export const VERDICT_COLOUR = { good: '#16a34a', mid: '#d97706', bad: '#dc2626' };
 export const PATTERN = ['stripes', 'dots', 'zigzag', 'checks'];

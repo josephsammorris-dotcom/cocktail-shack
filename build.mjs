@@ -3,4 +3,5 @@ import { copyFileSync, mkdirSync } from 'node:fs';
 mkdirSync('public/vendor', { recursive: true });
 copyFileSync('node_modules/three/build/three.module.min.js', 'public/vendor/three.module.min.js');
 copyFileSync('node_modules/qrcode-generator/qrcode.js', 'public/vendor/qrcode.js');
+copyFileSync('node_modules/three/examples/jsm/utils/BufferGeometryUtils.js', 'public/vendor/BufferGeometryUtils.js');
 console.log('vendor files copied');

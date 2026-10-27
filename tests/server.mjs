@@ -29,11 +29,12 @@ async function phone(i, token) {
   p.ws = await client(code, 'player', (m, ws) => {
     if (m.type === 'hello') ws.send2(token ? { type: 'rejoin', token } : { type: 'join', name: 'Bar ' + i });
     if (m.type === 'joined') p.token = m.token;
+    if (m.type === 'refused' && process.env.DEBUG) console.log(`  phone ${i} refused:`, m.reason, 'week', p.state?.week, 'cash', p.state?.me.cash, 'staff', p.state?.me.staff);
     if (m.type === 'state') {
       const prev = p.state; p.state = m;
       if (m.report) p.reports[m.week] = m.report;
       const fresh = !prev || prev.phase !== 'planning' || prev.week !== m.week;
-      if (m.phase === 'planning' && !m.me.locked && m.me.status === 'active' && (fresh || p.relock || Date.now() - (p.lastTry || 0) > 1500)) {
+      if (m.phase === 'planning' && !p.hold && !m.me.locked && m.me.status === 'active' && (fresh || p.relock || Date.now() - (p.lastTry || 0) > 1500)) {
         p.relock = false; p.lastTry = Date.now();
         const info = m.info;
         if (fresh && info.loan && i === 1) ws.send2({ type: 'loan.take' });
@@ -57,15 +58,18 @@ const t0 = Date.now();
 while (Date.now() - t0 < WEEKS * 60000) {
   await sleep(500);
   if (!tv) continue;
-  // drop and rejoin phone 1 in week 2 planning
+  // drop and rejoin phone 1 in week 2 planning (it holds off locking in, so nothing changes meanwhile)
+  if (tv.phase === 'briefing' && tv.week === 2 && N > 1) phones[1].hold = true;
   if (!reconnected && tv.phase === 'planning' && tv.week === 2 && N > 1) {
     reconnected = true;
+    await sleep(800);
     const before = JSON.stringify(phones[1].state.me.plan), cash = phones[1].state.me.cash;
     phones[1].ws.close(); await sleep(400);
     phones[1].relock = true;
     await phone(1, phones[1].token); await sleep(800);
-    check(phones[1].state.me.cash === cash, 'reconnected phone keeps its cash');
+    check(phones[1].state.me.cash === cash, `reconnected phone keeps its cash (${cash} before, ${phones[1].state.me.cash} after)`);
     check(phones[1].state.me.slot === 1, 'reconnected phone keeps its seat');
+    phones[1].hold = false; phones[1].relock = true; phones[1].ws.send2({ type: 'sound', on: false });   // nudge a state update so it locks
     console.log('  reconnect ok, plan', before);
   }
   if (tv.phase === 'finale') break;

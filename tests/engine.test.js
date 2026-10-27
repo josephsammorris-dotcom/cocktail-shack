@@ -10,27 +10,31 @@ function t(name, fn) {
 function eq(a, b, msg = '') { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${msg} expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); }
 function ok(c, msg) { if (!c) throw new Error(msg || 'assertion failed'); }
 
-function soloGame({ week = 1, weather = 'sunny', big = false } = {}) {
+function soloGame({ week = 1, weather = 'sunny' } = {}) {
   const g = E.createGame(1);
   E.addPlayer(g, { id: 'a', token: 'ta', name: 'A' });
   E.startGame(g);
   g.week = week; g.weather = weather; g.forecast = weather;
-  g.fixture = { ...E.fixtureFor(g, week), big: big ? 'Cup Semi-final' : null, seed: 1 };
+  g.fixture = { ...E.fixtureFor(g, week), seed: 1 };
   E.beginPlanning(g);
   return g;
 }
 
 console.log('Rules engine');
 
-t('1  solo week 1 worked example', () => {
-  const g = soloGame();
+// The crowd was retuned (see C.crowdBase, crowdByStage, seasonFactor), so the handbook's example 1 now reads:
+// week 6 league match (full season, crowd × 1.0), sunny, U = 0.5: attendance 52 + 14 = 66, buyers 66 × 1.1 = 72.6,
+// share 0.522, demand 37.9. The money and the verdicts are unchanged.
+t('1  solo worked example (retuned crowd)', () => {
+  const g = soloGame({ week: 6 });
+  eq(g.fixture.stage, 'league');
   const p = g.players[0];
   E.updatePlan(g, p, { drinks: 15, ads: 1, price: 15 });
   eq(E.lock(g, p).ok, true);
   const day = E.resolveDay(g, { U: 0.5, event: null });
   const r = day.results[0];
-  ok(near(r.demand, 91.8, 0.1), 'demand ' + r.demand);
-  eq(Math.round(r.demand), 92);
+  ok(near(day.B, 72.6, 1e-9), 'buyers ' + day.B);
+  ok(near(r.demand, 37.9, 0.1), 'demand ' + r.demand);
   eq([r.sold, r.takings, r.spent.total, r.profit, r.cashAfter], [15, 225, 95, 130, 230]);
   eq(r.verdicts.mix[0], 'mid'); eq(r.verdicts.ads[0], 'mid'); eq(r.verdicts.price[0], 'good'); eq(r.verdicts.staff[0], 'good');
 });
@@ -155,20 +159,42 @@ t('14 determinism: same seed and plans give identical results', () => {
   eq(run() === run(), true);
 });
 
-t('15 Big Match week', () => {
-  const g = soloGame({ week: 6, big: true });
-  const p = g.players[0];
-  E.updatePlan(g, p, { drinks: 15, ads: 1, price: 15 });
-  const day = E.resolveDay(g, { U: 0.5, event: null });
-  ok(near(day.B, 211.2, 1e-6), 'buyers ' + day.B);
-  ok(near(day.results[0].demand, 110.2, 0.2), 'demand ' + day.results[0].demand);
-  eq(day.results[0].sold, 15);
+t('15 crowd by fixture: no match, league, semi-final, final', () => {
+  const B = {};
+  for (const week of [5, 6, 11, 12]) {
+    const g = soloGame({ week });
+    E.updatePlan(g, g.players[0], { drinks: 15, ads: 1, price: 15 });
+    B[week] = E.resolveDay(g, { U: 0.5, event: null }).B;
+  }
+  ok(near(B[5], 72.6 * 0.7, 1e-9), 'no match ' + B[5]);
+  ok(near(B[6], 72.6, 1e-9), 'league ' + B[6]);
+  ok(near(B[11], 72.6 * 1.25, 1e-9), 'semi ' + B[11]);
+  ok(near(B[12], 72.6 * 1.5, 1e-9), 'final ' + B[12]);
 });
 
-t('Big Match weeks fall on week 6 and week 12', () => {
+t('season builds over the first five weeks', () => {
+  eq([1, 2, 3, 4, 5, 9].map(w => +E.seasonFactor(w).toFixed(3)), [0.7, 0.775, 0.85, 0.925, 1, 1]);
+});
+
+t('fixture list: league on even weeks, then semi-final and final', () => {
   const g = E.createGame(1);
-  eq(E.fixtureFor(g, 6).big, 'Cup Semi-final'); eq(E.fixtureFor(g, 12).big, 'Beach Cup Final'); eq(E.fixtureFor(g, 5).big, null);
-  eq(E.fixtureFor(g, 5).sport, 'volleyball'); eq(E.fixtureFor(g, 2).sport, 'football'); eq(E.fixtureFor(g, 7).away, 'Pelican Key');
+  const stages = Array.from({ length: 12 }, (_, i) => E.fixtureFor(g, i + 1).stage);
+  eq(stages, [null, 'league', null, 'league', null, 'league', null, 'league', null, 'league', 'semi', 'final']);
+  eq(E.fixtureFor(g, 2).away, 'Sandy Cove'); eq(E.fixtureFor(g, 4).away, 'Palm Bay'); eq(E.fixtureFor(g, 12).away, 'Pelican Key');
+  eq(E.fixtureFor(g, 3).match, false); eq(E.fixtureFor(g, 12).big, 'Beach Cup Final');
+  g.settings.bigMatch = false;
+  eq([E.fixtureFor(g, 11).stage, E.fixtureFor(g, 12).crowd], ['league', 1]);
+  g.settings.weeks = 8;
+  eq(Array.from({ length: 8 }, (_, i) => E.fixtureFor(g, i + 1).stage), [null, 'league', null, 'league', null, 'league', 'league', 'league']);
+});
+
+t('no-match days have no score and a beach-party banner for the extra event', () => {
+  const g = soloGame({ week: 3 });
+  const d = E.resolveDay(g, { U: 0.5, event: 'extra' });
+  eq(g.fixture.score, null);
+  ok(/beach party/.test(d.banner), d.banner);
+  const g2 = soloGame({ week: 4 });
+  ok(/third set/.test(E.resolveDay(g2, { U: 0.5, event: 'extra' }).banner));
 });
 
 t('lock refused when outlay exceeds cash; names cleaned', () => {

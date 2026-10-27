@@ -365,7 +365,7 @@ export class Room extends DurableObject {
       code: r.code, joinUrl: `${r.origin}/play/${r.code}`, phase: g.phase, week: g.week, weeks: g.settings.weeks,
       endsAt: r.endsAt, startAt: r.startAt, paused: !!r.paused, settings: g.settings, gameNo: g.gameNo,
       forecast: g.forecast, forecastLabel: g.forecast && E.WEATHER[g.forecast].label,
-      fixture: g.fixture && { sport: g.fixture.sport, sportName: g.fixture.sportName, away: g.fixture.away, big: g.fixture.big, seed: g.fixture.seed },
+      fixture: g.fixture && { match: g.fixture.match, stage: g.fixture.stage, name: g.fixture.name, sport: g.fixture.sport, sportName: g.fixture.sportName, away: g.fixture.away, big: g.fixture.big, crowd: g.fixture.crowd, seed: g.fixture.seed },
       costs: { mixCost: g.mixCost, adCost: g.adCost, prevMixCost: g.prevMixCost, prevAdCost: g.prevAdCost, wage: E.C.wage },
       rollover: g.rollover, tvOnline: this.tvOnline(), players: g.players.length,
     };
