@@ -65,7 +65,10 @@ Changes from the handbook:
   off the beach, leaving their towels and castles behind; everything is back in place the next day.
 - **Clothes.** Queues are dressed in a mix of colours (they used to wear their bar's colour, which made every
   customer of the coral bar red), and on chilly or stormy days the volleyball crowd wears bright jumpers rather than dark ones.
-- **The briefing is a slim, see-through strip along the bottom of the TV**, so the beach stays in view.
+- **The briefing is a slim, see-through strip along the bottom of the TV**, and the lobby (QR code, room code and bars)
+  is a slim see-through panel down the left side, so the beach stays in view.
+- **How to play.** A **?** button in the phone's header (and a *How to play* button in the waiting room) opens the rules
+  and the game's mechanics: costs, staff, weather, fixtures, price, adverts, surprises and loans.
 - **Customers keep their cocktails.** Each customer walks in from a spot on the beach and, once served, strolls back
   there with the drink in hand and stays, sipping, until the end of the day (or until seagulls or a storm clear the beach).
 - The four bar positions and the camera are pulled in a little so every bar fits a 16:9 TV, and room codes are claimed

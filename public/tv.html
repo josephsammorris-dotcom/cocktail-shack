@@ -35,18 +35,23 @@ body.card-up #cap{opacity:0}
 h1{margin:0;font-weight:900;letter-spacing:-.03em}
 .hide{display:none!important}
 /* lobby */
-#lobby{display:grid;grid-template-columns:auto auto;gap:calc(var(--u)*2.4);align-items:center;top:52%;padding:calc(var(--u)*1.8) calc(var(--u)*2.4)}
-#lobby h1{white-space:nowrap;font-size:calc(var(--u)*4.4);background:linear-gradient(135deg,var(--coral),#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent}
-#lobby .tag{color:var(--muted);font-weight:700;font-size:calc(var(--u)*1.6);margin:.2em 0 1em}
-.code{font-size:calc(var(--u)*6.2);font-weight:900;letter-spacing:.14em;color:var(--ink);line-height:1}
-.join{font-size:calc(var(--u)*1.5);color:var(--muted);font-weight:700}
+/* lobby: a slim, see-through panel down the left side, so the beach fills the rest of the screen */
+#lobby.panel{left:3vw;top:50%;transform:translateY(-50%);width:calc(var(--u)*26);max-height:90vh;display:flex;flex-direction:column;align-items:center;text-align:center;
+  gap:calc(var(--u)*.9);padding:calc(var(--u)*1.6) calc(var(--u)*1.6);background:rgba(255,255,255,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border-radius:calc(var(--u)*2)}
+#lobby.panel.hide{transform:translate(-30%,-50%)}
+#lobby h1{white-space:nowrap;font-size:calc(var(--u)*3);background:linear-gradient(135deg,var(--coral),#f59e0b);-webkit-background-clip:text;background-clip:text;color:transparent}
+#lobby .tag{color:var(--muted);font-weight:700;font-size:calc(var(--u)*1.2);margin-top:calc(var(--u)*-.4)}
+.code{font-size:calc(var(--u)*4.2);font-weight:900;letter-spacing:.14em;color:var(--ink);line-height:1;margin-right:-.14em}
+.join{font-size:calc(var(--u)*1.2);color:var(--muted);font-weight:700;line-height:1.35}
 .join b{color:var(--ink)}
-#qr{background:#fff;border-radius:calc(var(--u)*1.4);padding:calc(var(--u)*1);width:calc(var(--u)*19);height:calc(var(--u)*19)}
+#qr{background:#fff;border-radius:calc(var(--u)*1.2);padding:calc(var(--u)*.8);width:calc(var(--u)*14);height:calc(var(--u)*14);flex:none}
 #qr svg{width:100%;height:100%;display:block}
-.seats{display:grid;grid-template-columns:1fr 1fr;gap:calc(var(--u)*.8);margin-top:calc(var(--u)*1.4);max-width:calc(var(--u)*40)}
-.seat{white-space:nowrap;overflow:hidden;border-radius:999px;padding:calc(var(--u)*.6) calc(var(--u)*1.2);font-weight:800;font-size:calc(var(--u)*1.4);color:#fff;display:flex;gap:.5em;align-items:center}
-.seat.empty{background:#eef3f5;color:#9fb3bb}
+.seats{display:grid;grid-template-columns:1fr;gap:calc(var(--u)*.5);width:100%}
+.seat{white-space:nowrap;overflow:hidden;border-radius:999px;padding:calc(var(--u)*.45) calc(var(--u)*1);font-weight:800;font-size:calc(var(--u)*1.25);color:#fff;display:flex;gap:.5em;align-items:center}
+.seat.empty{background:rgba(238,243,245,.8);color:#9fb3bb}
 .seat .l{background:rgba(255,255,255,.3);border-radius:50%;width:1.5em;height:1.5em;display:grid;place-items:center;font-size:.85em}
+#lobby .hint{margin-top:0;font-size:calc(var(--u)*1.1)}
 .hint{color:var(--muted);font-weight:600;font-size:calc(var(--u)*1.3);margin-top:calc(var(--u)*1.2)}
 .kbd{display:inline-block;border:2px solid #cfdde2;border-bottom-width:4px;border-radius:8px;padding:0 .4em;font-weight:800;color:var(--ink)}
 /* briefing */
@@ -138,15 +143,13 @@ table.lb td.bar{display:flex;align-items:center;gap:.5em;font-weight:900}
     <div id="soundhint">🔈 Press any key to enable sound</div>
   </div>
   <div id="lobby" class="panel hide">
-    <div>
-      <h1>Cocktail Shack</h1>
-      <div class="tag">A beachside business game for 1 to 4 players</div>
-      <div class="join">Scan the code, or go to <b id="joinurl"></b> and enter</div>
-      <div class="code" id="code">····</div>
-      <div class="seats" id="seats"></div>
-      <div class="hint" id="lobbyhint"></div>
-    </div>
+    <h1>Cocktail Shack</h1>
+    <div class="tag">A beach bar game for 1 to 4 players</div>
     <div id="qr"></div>
+    <div class="join">Scan the code, or go to<br><b id="joinurl"></b> and enter</div>
+    <div class="code" id="code">····</div>
+    <div class="seats" id="seats"></div>
+    <div class="hint" id="lobbyhint"></div>
   </div>
   <div id="brief" class="panel hide"></div>
   <div id="results" class="panel hide"></div>

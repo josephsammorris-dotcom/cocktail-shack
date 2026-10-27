@@ -130,14 +130,14 @@ async function wake(on) {
 // ------------------------------------------------------------------ header
 function renderHeader() {
   if (!S?.me || screen === 'join' || screen === 'fatal') {
-    hdr.innerHTML = `<div class="chip" style="background:var(--coral)">🍹 Cocktail Shack</div><div class="hstats"><div class="sub">Room</div><div class="cash">${esc(code || '—')}</div></div>`;
+    hdr.innerHTML = `<div class="chip" style="background:var(--coral)">🍹 Cocktail Shack</div><div class="hstats"><div class="sub">Room</div><div class="cash">${esc(code || '—')}</div></div><button class="help" data-help aria-label="How to play">?</button>`;
     return;
   }
   const me = S.me;
   const week = S.phase === 'lobby' ? 'Waiting to start' : S.phase === 'finale' ? 'Game over' : `Week ${S.week} of ${S.weeks}`;
   const html = `<div class="chip">${photos[me.slot] ? `<img class="chipPic" src="${photos[me.slot]}" alt="">` : `<span class="chipPic ini">${esc(me.initials || LETTER[me.slot])}</span>`}${esc(me.bar)}</div>
     <div class="hstats"><div class="cash">${money(me.cash)}</div><div class="sub">${week}${me.debt ? ` · <span class="debt">owe ${money(me.debt)}</span>` : ''}</div></div>
-    <div class="ring" id="ring"></div>`;
+    <div class="ring" id="ring"></div><button class="help" data-help aria-label="How to play">?</button>`;
   if (hdr.dataset.k !== html) { hdr.innerHTML = html; hdr.dataset.k = html; }
   tickRing();
 }
@@ -211,7 +211,7 @@ const tvBanner = () => (!S.tvOnline || S.paused) ? `<div class="banner amber">�
 const BUILD = {}, UPDATE = {};
 
 function renderCodeEntry() {
-  hdr.innerHTML = `<div class="chip" style="background:var(--coral)">🍹 Cocktail Shack</div>`;
+  hdr.innerHTML = `<div class="chip" style="background:var(--coral)">🍹 Cocktail Shack</div><button class="help" data-help aria-label="How to play">?</button>`;
   main.innerHTML = `<div class="shack">🍹</div><h1 class="title">Join a game</h1><p class="tag">Type the four-letter code on the TV.</p>
     <div class="card"><input type="text" id="code" maxlength="4" autocapitalize="characters" autocomplete="off" placeholder="CODE" style="text-transform:uppercase;text-align:center;letter-spacing:.3em"></div>`;
   foot.innerHTML = `<button class="btn" id="go">Join</button>`;
@@ -246,7 +246,8 @@ BUILD.join = () => {
 
 BUILD.wait = () => {
   main.innerHTML = `<div class="card center"><div class="shack" style="font-size:56px">🏖️</div>
-      <h2 style="margin:6px 0 0">You're on the beach!</h2><p class="hint" id="w-msg"></p></div>
+      <h2 style="margin:6px 0 0">You're on the beach!</h2><p class="hint" id="w-msg"></p>
+      <button class="btn ghost small" data-help style="margin-top:8px">📖 How to play</button></div>
     <div class="card"><h3>Bars joined</h3><div class="rivals" id="w-list"></div></div><div id="w-tv"></div>${photoCardHTML()}`;
   foot.innerHTML = '';
   wirePhotoCard(true);
@@ -478,3 +479,65 @@ BUILD.final = () => {
 };
 
 if (conn) render();
+
+// ------------------------------------------------------------------ how to play
+const HOWTO = `
+<div class="card"><h3>🎯 The aim</h3>
+  <p>You run a cocktail bar on a busy beach for a season of Saturdays (8, 12 or 16 weeks). Everyone starts with <b>£1.00</b>.
+  Whoever has the most money at the end, less anything they still owe, wins.</p></div>
+<div class="card"><h3>🗓️ Each week</h3>
+  <ul><li><b>Briefing:</b> the TV shows the forecast, whether there's a volleyball match, and today's costs.</li>
+  <li><b>Planning:</b> on this phone, choose how many cocktails to mix, how many adverts to buy and your price, then press <b>Lock in</b>.
+  If you run out of time, your last plan is used (cut back if you can't afford it).</li>
+  <li><b>Match day:</b> watch the customers on the TV. Your phone shows live sales.</li>
+  <li><b>Results:</b> the TV shows the table and your phone shows your takings and what customers thought.</li></ul></div>
+<div class="card"><h3>💷 Costs</h3>
+  <table><tr><td>Each cocktail you mix</td><td>6p to start</td></tr>
+  <tr><td>Each advert</td><td>5p to start</td></tr>
+  <tr><td>Each extra member of staff</td><td>50p a week</td></tr></table>
+  <p class="hint">Each week there's a 50% chance cocktails go up by 1p and a 30% chance adverts go up by 1p. You pay for the whole plan up front, so you can't plan to spend more than you have.
+  Cocktails you don't sell are wasted.</p></div>
+<div class="card"><h3>👥 Staff</h3>
+  <p>Each person behind the bar can mix up to <b>25 cocktails</b>. You start on your own, and you work for free. Each extra person costs 50p a week, up to 8 in total.
+  If you let someone go they work today and leave tomorrow, unless you can't pay the wages, when they go straight away.</p></div>
+<div class="card"><h3>☀️ Weather</h3>
+  <table><tr><td>🌞 Scorcher</td><td>Busy and very thirsty</td></tr>
+  <tr><td>☀️ Sunny</td><td>A good day</td></tr>
+  <tr><td>☁️ Cloudy</td><td>Fewer people, less thirsty</td></tr>
+  <tr><td>🌬️ Chilly</td><td>Quiet</td></tr>
+  <tr><td>⛈️ Storm</td><td>The beach empties</td></tr></table>
+  <p class="hint">The forecast is right three times out of four. When it's wrong, it's only ever one step out (say, sunny instead of a scorcher).</p></div>
+<div class="card"><h3>🏐 Volleyball</h3>
+  <p>Matches draw bigger crowds. The fixture list is set for the season: league matches on even weeks, then the Beach Cup semi-final and final in the last two weeks.
+  Compared with a day with no match, a league match brings about 40% more people, the semi-final about 80% more and the final more than double.
+  The crowd also builds over the first few weeks of the season, and more bars on the beach means a bigger crowd overall.</p></div>
+<div class="card"><h3>🏷️ Price</h3>
+  <p>Customers are happy to pay up to about <b>2.4 times</b> what a cocktail costs you to make. Above that, fewer and fewer will buy, until no one will at about 6 times the cost.
+  Selling below cost wins only a few more customers, and it loses money on every drink.</p></div>
+<div class="card"><h3>📣 Adverts</h3>
+  <p>Adverts pull customers to your bar rather than your rivals'. Each one helps, but the effect tails off, and after about 9 adverts more makes no difference. With no adverts at all your bar is easy to miss.</p></div>
+<div class="card"><h3>🍹 Sharing the crowd</h3>
+  <p>Every bar on the beach shares the same crowd. Your share depends on your adverts and your price compared with everyone else's. If you sell out, the rest of your customers walk away.
+  Some customers who come over will still turn away; their reason appears above their heads on the TV.</p></div>
+<div class="card"><h3>🎲 Surprises</h3>
+  <ul><li>🚐 <b>Juice van:</b> a rival van pulls up and takes over half the customers.</li>
+  <li>🐦 <b>Seagulls:</b> gulls raid the beach and scatter the crowd. A match that day is called off.</li>
+  <li>🎉 <b>Third set / beach party:</b> a match goes to a third set, or on a day with no match a beach party starts. Either way, lots more cocktails sell. A party sells well even in poor weather.</li>
+  <li>⛈️ <b>Storm:</b> the beach almost empties, and a match that day is called off.</li></ul></div>
+<div class="card"><h3>🏦 Loans</h3>
+  <p>If you're nearly broke (less than the cost of 8 cocktails) and owe nothing, Sandy the bank manager offers a loan of 40p plus 10p for each week (50p in week 1). You owe that plus 25%.
+  Half of each day's takings goes towards paying it off automatically, and you can only have one loan at a time.</p>
+  <p><b>Bankrupt:</b> if you owe money and can't afford even one cocktail, your bar closes and you're out of the game.</p></div>
+<div class="card"><h3>💡 Tips</h3>
+  <ul><li>Mix a few more than you expect to sell: running out costs more than a handful of spare drinks.</li>
+  <li>Read the forecast and check the fixture. A sunny final is the best day of the season.</li>
+  <li>Only hire staff when you need to mix more than they can handle, because wages come out every week.</li>
+  <li>Your results show what customers thought of your stock, price and adverts.</li></ul></div>`;
+function openHowto(on) {
+  const el = $('howto');
+  if (on && !$('howtoBody').innerHTML) $('howtoBody').innerHTML = HOWTO;
+  el.classList.toggle('open', on); el.setAttribute('aria-hidden', on ? 'false' : 'true');
+  if (on) $('howtoBody').scrollTop = 0;
+}
+document.addEventListener('click', e => { if (e.target.closest('[data-help]')) openHowto(true); });
+$('howtoClose').onclick = () => openHowto(false);

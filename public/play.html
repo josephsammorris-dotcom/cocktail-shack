@@ -111,6 +111,19 @@ input[type=text]:focus{border-color:var(--teal)}
 .photoBtns{display:grid;gap:8px;justify-items:start}
 .pPic{width:84px;height:84px;border-radius:50%;flex:none;background:#f6ead6 center/cover no-repeat;box-shadow:0 0 0 3px var(--me)}
 .pPic.empty{display:grid;place-items:center}.pPic.empty::after{content:"🙂";font-size:2.2rem;opacity:.5}
+.help{flex:none;width:36px;height:36px;border-radius:50%;border:0;background:#fff3e0;color:var(--ink);font:800 18px Inter,system-ui;
+  box-shadow:inset 0 0 0 2px var(--line);cursor:pointer}
+header .chip+.help{margin-left:auto}
+#howto{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;transform:translateY(100%);transition:transform .25s}
+#howto.open{transform:none}
+#howto .hhead{flex:none;display:flex;align-items:center;gap:10px;padding:calc(12px + var(--safe-t)) 16px 12px;background:#fff;border-bottom:1px solid var(--line)}
+#howto .hhead h2{margin:0;font-size:20px;font-weight:800;flex:1}
+#howto .hbody{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px calc(24px + var(--safe-b));display:flex;flex-direction:column;gap:12px}
+#howto .card p,#howto .card li{font-size:15px;margin:0 0 6px}
+#howto .card ul{margin:0;padding-left:20px}
+#howto table{width:100%;border-collapse:collapse;font-size:14px}
+#howto td{padding:5px 0;border-bottom:1px solid #f4ecdc}
+#howto td:last-child{text-align:right;font-weight:700}
 .hide{display:none!important}
 @media (orientation:landscape) and (min-width:640px){
   main{display:grid;grid-template-columns:1fr 1fr;align-content:start}
@@ -127,6 +140,10 @@ input[type=text]:focus{border-color:var(--teal)}
 </div>
 <div class="offline" id="offline">Reconnecting…</div>
 <div class="toast" id="toast"></div>
+<div id="howto" aria-hidden="true">
+  <div class="hhead"><h2>🍹 How to play</h2><button class="btn small ghost" id="howtoClose">Close</button></div>
+  <div class="hbody" id="howtoBody"></div>
+</div>
 <script type="module" src="/play.js"></script>
 </body>
 </html>
