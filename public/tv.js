@@ -16,7 +16,10 @@ let conn = null, code = null;
 let debug = false, menuOpen = false;
 let lastSaleTimes = [];
 let photos = {};                       // slot -> selfie, from the server
-const pic = (slot, colour, cls = 'pic') => photos[slot] ? `<img class="${cls}" src="${photos[slot]}" alt="" style="--pc:${colour}">` : null;
+// a round photo, or the player's initials in a circle when they haven't taken one
+const pic = (slot, colour, cls = 'pic', initials = '?', fill = colour) => photos[slot]
+  ? `<img class="${cls}" src="${photos[slot]}" alt="" style="--pc:${colour}">`
+  : `<span class="${cls} ini" style="--pc:${colour};background:${fill}">${esc(initials)}</span>`;
 
 // ------------------------------------------------------------------ room
 async function newRoom() {
@@ -70,7 +73,7 @@ function renderLobby() {
   }
   $('seats').innerHTML = [0, 1, 2, 3].map(i => {
     const b = S.bars.find(x => x.slot === i);
-    return b ? `<div class="seat" style="background:${b.colour}">${pic(i, '#fff') || `<span class="l">${LETTER[i]}</span>`}${esc(b.bar)}${b.bot ? ' 🤖' : ''}${b.connected ? '' : ' 📵'}</div>`
+    return b ? `<div class="seat" style="background:${b.colour}">${pic(i, '#fff', 'pic', b.initials, 'rgba(255,255,255,.28)')}${esc(b.bar)}${b.bot ? ' 🤖' : ''}${b.connected ? '' : ' 📵'}</div>`
       : `<div class="seat empty"><span class="l">${LETTER[i]}</span>Free</div>`;
   }).join('');
   const starter = S.bars.find(b => b.starter);
@@ -106,7 +109,7 @@ function renderResults() {
     const r = S.results.find(x => x.slot === st.slot);
     const faces = r?.faces ? ['mix', 'ads', 'price', 'staff'].map(k => FACE[r.faces[k]]).join('') : (r ? '⛈️' : '');
     return `<tr class="${st.out && !r?.eliminated ? 'out' : ''}">
-      <td class="bar">${pic(st.slot, st.colour) || `<span class="sw" style="background:${st.colour}">${LETTER[st.slot]}</span>`}${esc(st.bar)}${st.out ? ' <span class="neg">OUT</span>' : ''}</td>
+      <td class="bar">${pic(st.slot, st.colour, 'pic', st.initials)}${esc(st.bar)}${st.out ? ' <span class="neg">OUT</span>' : ''}</td>
       <td>${money(st.netWorth)}</td><td>${r ? money(r.takings) : '—'}</td>
       <td class="${r && r.profit < 0 ? 'neg' : 'pos'}">${r ? (r.profit >= 0 ? '+' : '') + money(r.profit) : '—'}</td>
       <td>${money(st.cash)}</td><td class="${st.debt ? 'neg' : ''}">${st.debt ? money(st.debt) : '—'}</td>
@@ -130,8 +133,8 @@ function renderFinale() {
   const tie = st.filter(x => x.position === 1).length > 1;
   $('finale').innerHTML = `<h1>${solo ? esc(st[0].bar) : tie ? '🏆 A tie at the top!' : `🏆 ${esc(st[0].bar)} takes the beach!`}</h1>
     <div class="podium">${order.map(s => `<div class="step" style="background:${s.out ? '#94a3b8' : s.colour};height:calc(var(--u)*${h[Math.min(3, s.position)] || 12})">
-      ${pic(s.slot, '#fff', 'face') || ''}<div class="m">${s.out ? '🏚️' : medal[s.position] || ''}</div><div class="n">${esc(s.bar)}</div><div class="w">${money(s.netWorth)}</div></div>`).join('')}</div>
-    ${st.length > 3 || st.some(s => s.out) ? `<table class="lb" style="max-width:40em;margin:0 auto">${st.map(s => `<tr class="${s.out ? 'out' : ''}"><td class="bar"><b>${s.position}</b>${pic(s.slot, s.colour) || `<span class="sw" style="background:${s.colour}">${LETTER[s.slot]}</span>`}${esc(s.bar)}${s.out ? ' OUT' : ''}</td><td>${money(s.netWorth)}${s.debt ? ` <span class="neg">(owes ${money(s.debt)})</span>` : ''}</td></tr>`).join('')}</table>` : ''}
+      ${pic(s.slot, '#fff', 'face', s.initials, 'rgba(255,255,255,.25)')}<div class="m">${s.out ? '🏚️' : medal[s.position] || ''}</div><div class="n">${esc(s.bar)}</div><div class="w">${money(s.netWorth)}</div></div>`).join('')}</div>
+    ${st.length > 3 || st.some(s => s.out) ? `<table class="lb" style="max-width:40em;margin:0 auto">${st.map(s => `<tr class="${s.out ? 'out' : ''}"><td class="bar"><b>${s.position}</b>${pic(s.slot, s.colour, 'pic', s.initials)}${esc(s.bar)}${s.out ? ' OUT' : ''}</td><td>${money(s.netWorth)}${s.debt ? ` <span class="neg">(owes ${money(s.debt)})</span>` : ''}</td></tr>`).join('')}</table>` : ''}
     <div class="hint">Press <span class="kbd">Enter</span> or tap Play again on a phone for another game with the same bars.</div>`;
   show('finale', true);
 }

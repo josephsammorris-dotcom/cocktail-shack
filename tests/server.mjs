@@ -17,6 +17,7 @@ function client(code, role, onMsg) {
 const { code } = await (await fetch(BASE + '/api/new')).json();
 console.log('room', code);
 let tv = null, scripts = {}, results = {}, tvPhotos = {};
+const BIG = 'data:image/jpeg;base64,' + 'A'.repeat(20000);
 // a tiny valid JPEG, standing in for a selfie
 const PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
 const tvWs = await client(code, 'tv', m => {
@@ -30,7 +31,8 @@ const phones = [];
 async function phone(i, token) {
   const p = phones[i] ||= { i, state: null, token: null, reports: {} };
   p.ws = await client(code, 'player', (m, ws) => {
-    if (m.type === 'hello') ws.send2(token ? { type: 'rejoin', token } : { type: 'join', name: 'Bar ' + i, photo: i === 0 ? PHOTO : undefined });
+    // phone 2's selfie is camera-sized (about 20 KB), the size that used to be dropped on the way in
+    if (m.type === 'hello') ws.send2(token ? { type: 'rejoin', token, photo: i === 2 ? BIG : undefined } : { type: 'join', name: 'Bar ' + i, owner: i === 0 ? 'Joe Morris' : '', photo: i === 0 ? PHOTO : i === 2 ? BIG : undefined });
     if (m.type === 'joined') p.token = m.token;
     if (m.type === 'refused' && process.env.DEBUG) console.log(`  phone ${i} refused:`, m.reason, 'week', p.state?.week, 'cash', p.state?.me.cash, 'staff', p.state?.me.staff);
     if (m.type === 'state') {
@@ -55,6 +57,8 @@ for (let i = 0; i < N; i++) { await phone(i); await sleep(200); }
 await sleep(500);
 check(tv.bars.length === N, 'all phones seated');
 check(tvPhotos[0] === PHOTO && !tvPhotos[1], 'the TV gets the selfie of the player who sent one');
+check(N < 3 || tvPhotos[2] === BIG, 'a camera-sized selfie on the join message gets through');
+check(tv.bars[0].initials === 'JM' && tv.bars[1].initials === 'B1', 'initials from the player name, else the bar: ' + tv.bars.map(b => b.initials));
 phones[1].ws.send2({ type: 'photo', photo: PHOTO }); await sleep(400);
 check(tvPhotos[1] === PHOTO, 'a selfie taken in the lobby reaches the TV');
 phones[1].ws.send2({ type: 'photo', photo: 'data:image/png;base64,AAAA' }); await sleep(300);

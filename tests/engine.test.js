@@ -244,6 +244,11 @@ t('lock refused when outlay exceeds cash; names cleaned', () => {
   eq(E.cleanName('A very long bar name indeed', 0, []).length, 14);
 });
 
+t('initials: player name first, else the bar, skipping "The"', () => {
+  eq(['Joe Morris', '', 'Bob', 'Mary Ann Lee'].map(o => E.initialsOf(o, 'The Red Parrot')), ['JM', 'RP', 'BO', 'ML']);
+  eq(E.initialsOf('', 'Tiki'), 'TI'); eq(E.initialsOf('', ''), '?');
+});
+
 t('day script counters end on sold', () => {
   const g = E.createGame(7);
   ['a', 'b'].forEach(id => E.addPlayer(g, { id, token: id, name: id }));

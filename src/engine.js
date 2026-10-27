@@ -225,7 +225,21 @@ export function cleanName(raw, slot, taken) {
   return name;
 }
 
-export function addPlayer(g, { id, token, name, bot = false }) {
+/** Up to two initials, from the player's own name if they gave one, else their bar ("The" doesn't count). */
+export function initialsOf(owner, bar) {
+  const words = String(owner || bar || '').replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
+  const useful = words.length > 1 ? words.filter((w, i) => !(i === 0 && /^the$/i.test(w))) : words;
+  if (!useful.length) return '?';
+  const first = useful[0], last = useful.length > 1 ? useful[useful.length - 1] : '';
+  return ((first[0] || '') + (last[0] || first[1] || '')).toUpperCase();
+}
+function cleanOwner(raw) {
+  let n = String(raw || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, C.nameMax);
+  for (const w of PROFANITY) n = n.replace(new RegExp(w, 'gi'), m => m[0] + '*'.repeat(m.length - 1));
+  return n;
+}
+
+export function addPlayer(g, { id, token, name, owner = '', bot = false }) {
   if (g.phase !== 'lobby') return { error: 'The game has already started.' };
   if (g.players.length >= C.maxPlayers) return { error: 'The beach is full: four bars at most.' };
   const used = new Set(g.players.map(p => p.slot));
@@ -233,6 +247,7 @@ export function addPlayer(g, { id, token, name, bot = false }) {
   const p = {
     id, token, slot, bot,
     bar: cleanName(name, slot, g.players.map(q => q.bar)),
+    owner: cleanOwner(owner),
     colour: SEATS[slot].hex,
     status: 'active', cash: C.startCash, debt: 0, staff: 1, leaving: 0,
     plan: { drinks: 15, ads: 2, price: 15 }, locked: false, touched: false, ready: false,
@@ -622,7 +637,7 @@ export function endWeek(g) {
 }
 
 export function standings(g) {
-  const rows = g.players.map(p => ({ slot: p.slot, bar: p.bar, colour: p.colour, netWorth: netWorth(p),
+  const rows = g.players.map(p => ({ slot: p.slot, bar: p.bar, colour: p.colour, initials: initialsOf(p.owner, p.bar), netWorth: netWorth(p),
     cash: p.cash, debt: p.debt, out: p.status === 'out', bot: p.bot }));
   rows.sort((a, b) => b.netWorth - a.netWorth);
   let pos = 0, last = null;
@@ -644,7 +659,7 @@ export function publicBar(g, p) {
   const showMoney = g.phase === 'results' || g.phase === 'finale' || g.week > 1 || g.phase === 'lobby';
   return {
     slot: p.slot, bar: p.bar, colour: p.colour, staff: p.staff, locked: p.locked, status: p.status,
-    bot: p.bot, away: p.away, ready: p.ready,
+    bot: p.bot, away: p.away, ready: p.ready, initials: initialsOf(p.owner, p.bar),
     netWorth: showMoney ? netWorth(p) : null, cash: showMoney ? p.cash : null, debt: showMoney ? p.debt : null,
     ...(showPlan && p.history.length ? { price: p.plan.price, mixed: p.plan.drinks, ads: p.plan.ads } : {}),
   };

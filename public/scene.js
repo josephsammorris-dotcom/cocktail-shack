@@ -79,19 +79,26 @@ function mergeStatic(group) {
 // a small seeded random for textures and layout, so the beach looks the same every time
 function seeded(seed) { let a = seed | 0; return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-export function labelSprite(text, { bg = '#123c4a', fg = '#fff', font = 800, size = 64, pad = 28, letter = null, img = null, scale = 0.05 } = {}) {
+export function labelSprite(text, { bg = '#123c4a', fg = '#fff', font = 800, size = 64, pad = 28, letter = null, img = null, initials = null, scale = 0.05 } = {}) {
   const meas = document.createElement('canvas').getContext('2d');
   meas.font = `${font} ${size}px Inter, system-ui, sans-serif`;
-  const ph = img ? size * 2.2 : 0;                      // a photo makes the badge taller, so the face reads on a TV
-  const tw = meas.measureText(text).width + (img ? ph + size * 0.35 : letter ? size * 1.2 : 0);
+  const ph = img || initials ? size * 2.2 : 0;          // a photo (or initials) makes the badge taller, so it reads on a TV
+  const tw = meas.measureText(text).width + (ph ? ph + size * 0.35 : letter ? size * 1.2 : 0);
   const w = Math.ceil(tw + pad * 2), h = Math.ceil(Math.max(size * 1.6, ph + 12));
   const tex = canvasTex(w, h, (ctx) => {
     ctx.fillStyle = bg; roundRect(ctx, 0, 0, w, h, h / 2); ctx.fill();
     ctx.font = `${font} ${size}px Inter, system-ui, sans-serif`; ctx.textBaseline = 'middle';
     let x = pad;
-    if (img) {
+    if (img || initials) {
       const r = ph / 2, cx = x + r - 8, cy = h / 2;
-      ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.clip(); ctx.drawImage(img, cx - r, cy - r, ph, ph); ctx.restore();
+      if (img) { ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.clip(); ctx.drawImage(img, cx - r, cy - r, ph, ph); ctx.restore(); }
+      else {
+        // no photo: the player's initials in the same circle
+        ctx.fillStyle = 'rgba(255,255,255,.28)'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+        ctx.fillStyle = fg; ctx.font = `900 ${Math.round(size * (initials.length > 1 ? 1.05 : 1.3))}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.fillText(initials, cx, cy + 3);
+        ctx.font = `${font} ${size}px Inter, system-ui, sans-serif`; ctx.textAlign = 'left';
+      }
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(cx, cy, r - 3, 0, 7); ctx.stroke();
       x += ph + size * 0.2;
     } else if (letter) {
@@ -660,7 +667,7 @@ export class Beach {
       seen.add(b.slot);
       let bar = this.bars[b.slot];
       if (!bar) bar = this.bars[b.slot] = this.makeBar(b);
-      if (bar.name !== b.bar) this.renameBar(bar, b.bar);
+      if (bar.name !== b.bar || bar.initials !== b.initials) { bar.initials = b.initials; this.renameBar(bar, b.bar); }
       bar.staffCount = b.staff;
       this.setStaff(bar, b.staff);
       this.setBoarded(bar, b.status === 'out');
@@ -714,14 +721,14 @@ export class Beach {
     const closed = labelSprite('CLOSED', { bg: '#7f1d1d', scale: 0.04 }); closed.position.set(0, 5.4, 3.8); boards.add(closed);
 
     // name badge floating above, in the player's colour, with the seat letter
-    const badge = labelSprite(b.bar, { bg: b.colour, letter: LETTERS[b.slot], img: this.photoImgs?.[b.slot] || null, scale: 0.04 }); badge.position.set(0, 16.5, 0); g.add(badge);
+    const badge = labelSprite(b.bar, { bg: b.colour, letter: LETTERS[b.slot], img: this.photoImgs?.[b.slot] || null, initials: b.initials || LETTERS[b.slot], scale: 0.04 }); badge.position.set(0, 16.5, 0); g.add(badge);
     // price board on an easel in front (appears at the start of the day)
     const price = labelSprite('15p', { bg: '#1f2937', fg: '#fde68a', size: 72, scale: 0.042 }); price.position.set(-6.2, 2.6, 5.4); price.visible = false; g.add(price);
     const easel = new THREE.Mesh(new THREE.ConeGeometry(1.5, 2.6, 4), toon('#8b5a2b')); easel.position.set(-6.2, 1.3, 5.4); easel.rotation.y = Math.PI / 4; easel.castShadow = true; g.add(easel);
 
     mergeStatic(g);
     this.scene.add(g);
-    const bar = { slot: b.slot, colour: b.colour, name: b.bar, group: g, badge, price, flag, boards, roofMat, glass,
+    const bar = { slot: b.slot, colour: b.colour, name: b.bar, initials: b.initials, group: g, badge, price, flag, boards, roofMat, glass,
       staff: [], queue: [], leavers: [], staffCount: 0, pop: 0, boarded: false, front: new THREE.Vector3(0, 0, 1).applyEuler(g.rotation) };
     g.scale.setScalar(0.01);
     return bar;
@@ -729,7 +736,7 @@ export class Beach {
 
   renameBar(bar, name) {
     bar.group.remove(bar.badge);
-    bar.badge = labelSprite(name, { bg: bar.colour, letter: LETTERS[bar.slot], img: this.photoImgs?.[bar.slot] || null, scale: 0.04 }); bar.badge.position.set(0, 16.5, 0);
+    bar.badge = labelSprite(name, { bg: bar.colour, letter: LETTERS[bar.slot], img: this.photoImgs?.[bar.slot] || null, initials: bar.initials || LETTERS[bar.slot], scale: 0.04 }); bar.badge.position.set(0, 16.5, 0);
     bar.group.add(bar.badge); bar.name = name; bar.photoKey = this.photos?.[bar.slot] || '';
   }
   /** Players' selfies, shown on their bar's floating badge. */
@@ -773,7 +780,7 @@ export class Beach {
     while (bar.queue.length < n) {
       const i = bar.queue.length;
       const f = figure({ shirt: bar.colour, shorts: ['#123c4a', '#1f2937', '#ffffff'][i % 3], scale: 0.9, eyes: false });
-      f.userData.pop = 0;
+      f.userData.pop = 0; f.userData.origin = this.customerOrigin(bar);
       this.scene.add(f); bar.queue.push(f);
     }
     while (bar.queue.length > n) {
@@ -787,12 +794,66 @@ export class Beach {
         continue;
       }
       const f = bar.queue.shift();
-      const drink = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.7, 10), toon(bar.colour)); drink.rotation.x = Math.PI; drink.position.set(0.9, 3, 0.7); f.userData.torso.add(drink);
-      const dir = bar.front.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 2.2);
-      f.userData.leave = { dir, t: 0 };
+      this.giveDrink(f, bar.colour);
+      f.userData.leave = { t: 0 };
       bar.leavers.push(f);
     }
   }
+  /** Where a customer was on the beach before they joined a queue: somewhere between the bar and the middle of the
+   *  beach, never on the court or in the stands, never in the sea. */
+  customerOrigin(bar) {
+    const p = bar.group.position, a = (Math.random() - 0.5) * 1.8, d = 14 + Math.random() * 14;
+    const dir = bar.front.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
+    const o = new THREE.Vector3(p.x + dir.x * d, 0, p.z + dir.z * d);
+    const keepX = COURT.hx + 9, keepZ = COURT.hz + 12;
+    if (Math.abs(o.x) < keepX && Math.abs(o.z) < keepZ) o.x = Math.sign(o.x || p.x) * (keepX + Math.random() * 4);
+    o.z = Math.max(SHORE + 4, Math.min(38, o.z));
+    return o;
+  }
+  /** A cocktail in the bar's colour, held in the right hand. */
+  giveDrink(f, colour) {
+    const glass = new THREE.Group();
+    const bowl = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.7, 10), toon(colour)); bowl.rotation.x = Math.PI; bowl.position.y = 0.55;
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.2, 0.4, 6), toon('#e0f7ff')); stem.position.y = 0.05;
+    const brolly = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.22, 8), toon('#facc15')); brolly.position.set(0.18, 1.05, 0); brolly.rotation.z = -0.4;
+    glass.add(bowl, stem, brolly);
+    const hand = f.userData.arms[1];
+    glass.position.set(0, -1.75, 0.1);
+    if (hand) hand.add(glass); else f.userData.torso.add(glass);
+    f.userData.drink = glass; f.userData.sipAt = 2 + Math.random() * 3;
+  }
+  /** A customer with somewhere to be: walk there, then stand and sip. Returns false once they've left the beach. */
+  stroll(f, target, t, dt, speed = 7) {
+    const u = f.userData;
+    if (this.fleeing()) {
+      // gulls or a storm: off the beach, fast
+      const away = new THREE.Vector3(Math.sign(f.position.x || 1) * 160, 0, 70).sub(f.position);
+      if (away.length() < 4) { this.scene.remove(f); return false; }
+      away.normalize(); f.position.addScaledVector(away, dt * 14); f.rotation.y = Math.atan2(away.x, away.z);
+      animateFigure(f, t, { walk: 1, arms: !u.drink, dt });
+      if (u.drink) poseArms(f, [0.4, -1.0], [-0.1, 0.1], dt);
+    } else {
+      const d = target.clone().sub(f.position), dist = d.length();
+      if (dist > 0.3) {
+        d.normalize(); f.position.addScaledVector(d, Math.min(dist, dt * speed)); f.rotation.y = Math.atan2(d.x, d.z);
+        animateFigure(f, t, { walk: 1, arms: !u.drink, dt });
+        if (u.drink) poseArms(f, [Math.sin(t * 9 + u.phase) * 0.4, -0.9], [-0.12, 0.2], dt);
+      } else {
+        // arrived: face the sea and enjoy it, with a sip now and then
+        f.rotation.y += ((Math.PI + Math.sin(u.phase) * 0.8) - f.rotation.y) * Math.min(1, dt * 2);
+        animateFigure(f, t, { bounce: 0.05, arms: !u.drink, dt });
+        if (u.drink) {
+          u.sipAt -= dt;
+          const sipping = u.sipAt < 0.7;
+          if (u.sipAt < 0) u.sipAt = 3 + Math.random() * 3;
+          poseArms(f, [0, sipping ? -2.35 : -0.75], [-0.12, sipping ? 0.35 : 0.15], dt, 8);
+        }
+      }
+    }
+    if (u.drink) u.drink.rotation.x = -u.armX[1];     // keep the glass upright whatever the arm does
+    return true;
+  }
+
   queueSpot(bar, i) {
     const p = bar.group.position, f = bar.front;
     const side = new THREE.Vector3(-f.z, 0, f.x);
@@ -868,6 +929,7 @@ export class Beach {
   stopDay() {
     for (const w of this.walkAways || []) this.scene.remove(w.f);
     this.walkAways = [];
+    for (const bar of this.bars) if (bar) { for (const f of bar.leavers) this.scene.remove(f); bar.leavers = []; }
     this.day = null; this.vb.endMatch(); this.van.visible = false; this.gulls.forEach(g => g.visible = false);
     for (const f of this.defectors) this.scene.remove(f);
     this.defectors = [];
@@ -1090,20 +1152,12 @@ export class Beach {
       bar.queue.forEach((f, i) => {
         const target = this.queueSpot(bar, i);
         const d = target.sub(f.position); const dist = d.length();
-        if (f.userData.pop === 0) { f.position.copy(this.queueSpot(bar, i).add(bar.front.clone().multiplyScalar(22)).add(new THREE.Vector3((Math.random() - 0.5) * 10, 0, 0))); }
+        if (f.userData.pop === 0) f.position.copy(f.userData.origin);
         f.userData.pop = Math.min(1, f.userData.pop + dt * 2);
         if (dist > 0.2) { f.position.addScaledVector(d.normalize(), Math.min(dist, dt * 12)); f.rotation.y = Math.atan2(d.x, d.z); animateFigure(f, t, { walk: 1, dt }); }
         else { f.lookAt(bar.group.position.x, 0, bar.group.position.z); animateFigure(f, t, { bounce: 0.1, dt }); }
       });
-      bar.leavers = bar.leavers.filter(f => {
-        const L = f.userData.leave; L.t += dt;
-        f.position.addScaledVector(L.dir, dt * 10); f.rotation.y = Math.atan2(L.dir.x, L.dir.z);
-        animateFigure(f, t, { walk: 1, dt });
-        const s = f.userData.baseScale * Math.max(0, 1 - Math.max(0, L.t - 1.2) / 0.6);
-        f.scale.setScalar(s);
-        if (L.t > 1.8) { this.scene.remove(f); return false; }
-        return true;
-      });
+      bar.leavers = bar.leavers.filter(f => this.stroll(f, f.userData.origin, t, dt));
       if (bar.price.visible) { bar.price.userData.pop = Math.min(1, (bar.price.userData.pop || 0) + dt * 3); const p = bar.price.userData.pop; const base = bar.price.userData.base ||= bar.price.scale.clone(); bar.price.scale.copy(base).multiplyScalar(p < 1 ? 1 + Math.sin(p * Math.PI) * 0.3 : 1); }
     }
     // customers who defected walk over and crowd round the van
@@ -1165,28 +1219,32 @@ export class Beach {
     this.scene.add(f);
     const away = bar.front.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.8));
     this.walkAways ||= [];
-    this.walkAways.push({ f, w, bubble, t: 0, away, target: rival ? this.queueSpot(rival, 5 + Math.floor(Math.random() * 2)) : null });
+    this.walkAways.push({ f, w, bubble, t: 0, away, rival, origin: this.customerOrigin(bar), target: rival ? this.queueSpot(rival, 5 + Math.floor(Math.random() * 2)) : null });
   }
-  /** Stand at the front and shake the head with the reason overhead, then leave. Returns false when done. */
+  /** Stand at the front and shake the head with the reason overhead, then go back to where they were.
+   *  Anyone off to a cheaper bar queues there, buys, and takes that bar's cocktail back with them. */
   stepWalkAway(o, t, dt) {
     o.t += dt;
     const f = o.f, b = o.bubble;
     const pop = Math.min(1, o.t / 0.3), fade = Math.max(0, 1 - Math.max(0, o.t - 2.4) / 0.4);
     b.scale.copy(b.userData.base).multiplyScalar(easeOutBack(pop) * fade + 0.001);
-    if (o.t < 0.8) {
+    if (o.t < 0.8 && !this.fleeing()) {
       f.rotation.y += Math.sin(o.t * 18) * 0.06;                  // a shake of the head
       animateFigure(f, t, { bounce: 0.05, dt });
-    } else {
-      let dir;
-      if (o.target) { dir = o.target.clone().sub(f.position); if (dir.length() < 0.6) o.arrived ??= o.t; dir.normalize(); }
-      else dir = o.away;
-      if (o.arrived == null) { f.position.addScaledVector(dir, dt * (o.target ? 12 : 9)); f.rotation.y = Math.atan2(dir.x, dir.z); }
-      animateFigure(f, t, { walk: o.arrived == null ? 1 : 0, dt });
+      return true;
     }
-    const end = o.target ? (o.arrived != null ? o.arrived + 0.5 : 6) : 3.2;
-    if (o.t > end - 0.5) f.scale.setScalar(f.userData.baseScale * Math.max(0.001, (end - o.t) / 0.5));
-    if (o.t >= end) { this.scene.remove(f); return false; }
-    return true;
+    if (o.target && !o.bought) {
+      const d = o.target.clone().sub(f.position);
+      if (d.length() > 0.6 && !this.fleeing()) {
+        d.normalize(); f.position.addScaledVector(d, dt * 10); f.rotation.y = Math.atan2(d.x, d.z);
+        animateFigure(f, t, { walk: 1, dt });
+        return true;
+      }
+      o.waited = (o.waited || 0) + dt;
+      if (o.waited < 1.4 && !this.fleeing()) { f.lookAt(o.rival.group.position.x, 0, o.rival.group.position.z); animateFigure(f, t, { bounce: 0.08, dt }); return true; }
+      o.bought = true; if (!this.fleeing()) this.giveDrink(f, o.rival.colour);
+    }
+    return this.stroll(f, o.origin, t, dt);
   }
 
   qualityCheck(dt) {

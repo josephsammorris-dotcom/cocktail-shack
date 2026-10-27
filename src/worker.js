@@ -126,8 +126,7 @@ export class Room extends DurableObject {
 
   // ------------------------------------------------------------------ messages
   async webSocketMessage(ws, data) {
-    // photos are the only big messages; everything else is a few hundred bytes
-    if (typeof data !== 'string' || data.length > 64000 || (data.length > 4096 && !data.includes('"type":"photo"'))) return;
+    if (typeof data !== 'string' || data.length > 64000) return;
     const now = Date.now();
     const rl = this.rate.get(ws) || { t: now, n: 0 };
     if (now - rl.t > 1000) { rl.t = now; rl.n = 0; }
@@ -136,6 +135,8 @@ export class Room extends DurableObject {
 
     let msg; try { msg = JSON.parse(data); } catch (e) { return; }
     if (!msg || typeof msg.type !== 'string') return;
+    // a selfie can ride on join, rejoin and photo messages; everything else is a few hundred bytes
+    if (data.length > 4096 && !['join', 'rejoin', 'photo'].includes(msg.type)) return;
     await this.load();
     if (!this.r) return;
     const me = this.meta(ws);
@@ -196,7 +197,7 @@ export class Room extends DurableObject {
     // a phone that already holds a seat in this room just rejoins it
     if (msg.token) { const p = g.players.find(q => q.token === msg.token); if (p) return this.onRejoin(ws, msg); }
     const id = 'p' + randToken().slice(0, 8), token = randToken();
-    const res = E.addPlayer(g, { id, token, name: msg.name });
+    const res = E.addPlayer(g, { id, token, name: msg.name, owner: msg.owner });
     if (res.error) return this.send(ws, { type: 'error', code: 'full', message: res.error });
     if (!this.r.starter || !g.players.some(q => q.id === this.r.starter)) this.r.starter = id;
     ws.serializeAttachment({ role: 'player', pid: id });
@@ -422,13 +423,13 @@ export class Room extends DurableObject {
   sendState(ws, p) {
     const r = this.r, g = r.g, day = g.day;
     const view = { type: 'state', ...this.common(),
-      me: { id: p.id, slot: p.slot, bar: p.bar, colour: p.colour, status: p.status, cash: p.cash, debt: p.debt,
+      me: { id: p.id, slot: p.slot, bar: p.bar, colour: p.colour, initials: E.initialsOf(p.owner, p.bar), status: p.status, cash: p.cash, debt: p.debt,
         staff: p.staff, leaving: p.leaving, plan: p.plan, locked: p.locked, ready: p.ready, away: p.away, bot: p.bot,
         history: p.history, removed: !!p.removed },
       info: E.planInfo(g, p),
       isStarter: r.starter === p.id,
-      lobby: g.players.map(q => ({ slot: q.slot, bar: q.bar, colour: q.colour, bot: q.bot, connected: this.online(q) })),
-      rivals: g.players.filter(q => q.id !== p.id).map(q => ({ slot: q.slot, bar: q.bar, colour: q.colour, staff: q.staff,
+      lobby: g.players.map(q => ({ slot: q.slot, bar: q.bar, colour: q.colour, initials: E.initialsOf(q.owner, q.bar), bot: q.bot, connected: this.online(q) })),
+      rivals: g.players.filter(q => q.id !== p.id).map(q => ({ slot: q.slot, bar: q.bar, colour: q.colour, initials: E.initialsOf(q.owner, q.bar), staff: q.staff,
         status: q.status, locked: q.locked, netWorth: g.week > 1 || g.phase === 'results' || g.phase === 'finale' ? E.netWorth(q) : null })),
       waiting: E.activePlayers(g).filter(q => !q.locked).length,
       myLeft: g.rollover?.left?.find(x => x.slot === p.slot)?.n || 0,

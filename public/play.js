@@ -30,7 +30,8 @@ async function photoFromFile(f) {
   c.getContext('2d').drawImage(img, (w - k) / 2, (h - k) * 0.35, k, k, 0, 0, 160, 160);
   return c.toDataURL('image/jpeg', 0.82);
 }
-const avatar = (slot, colour, cls = 'av') => photos[slot] ? `<img class="${cls}" src="${photos[slot]}" alt="" style="--pc:${colour}">` : `<span class="dot" style="background:${colour}"></span>`;
+// a round photo, or the player's initials in their colour when they haven't taken one
+const avatar = (slot, colour, initials = '?', cls = 'av') => photos[slot] ? `<img class="${cls}" src="${photos[slot]}" alt="" style="--pc:${colour}">` : `<span class="${cls} ini" style="background:${colour};--pc:${colour}">${esc(initials)}</span>`;
 
 /** The selfie card: a preview and Take / Retake / Remove. `live` sends changes to the game straight away. */
 function photoCardHTML() {
@@ -134,7 +135,7 @@ function renderHeader() {
   }
   const me = S.me;
   const week = S.phase === 'lobby' ? 'Waiting to start' : S.phase === 'finale' ? 'Game over' : `Week ${S.week} of ${S.weeks}`;
-  const html = `<div class="chip">${photos[me.slot] ? `<img class="chipPic" src="${photos[me.slot]}" alt="">` : `<span class="badge">${LETTER[me.slot]}</span>`}${esc(me.bar)}</div>
+  const html = `<div class="chip">${photos[me.slot] ? `<img class="chipPic" src="${photos[me.slot]}" alt="">` : `<span class="chipPic ini">${esc(me.initials || LETTER[me.slot])}</span>`}${esc(me.bar)}</div>
     <div class="hstats"><div class="cash">${money(me.cash)}</div><div class="sub">${week}${me.debt ? ` · <span class="debt">owe ${money(me.debt)}</span>` : ''}</div></div>
     <div class="ring" id="ring"></div>`;
   if (hdr.dataset.k !== html) { hdr.innerHTML = html; hdr.dataset.k = html; }
@@ -199,7 +200,7 @@ function sparkline(hist) {
 function rivalsHTML() {
   if (!S.rivals.length) return '';
   return `<div class="card"><h3>🏖️ Rival bars</h3><div class="rivals">${S.rivals.map(r => `
-    <div class="rival">${avatar(r.slot, r.colour)}${esc(r.bar)}
+    <div class="rival">${avatar(r.slot, r.colour, r.initials)}${esc(r.bar)}
       <span class="hint" style="margin:0">${r.status === 'out' ? 'OUT' : `${r.staff} staff${S.phase === 'planning' ? (r.locked ? ' · locked in' : ' · planning') : ''}`}</span>
       <span class="nw">${r.netWorth == null ? '' : money(r.netWorth)}</span></div>`).join('')}</div></div>`;
 }
@@ -226,12 +227,19 @@ BUILD.fatal = () => {
 BUILD.join = () => {
   main.innerHTML = `<div class="shack">🍹</div><h1 class="title">Cocktail Shack</h1>
     <p class="tag">A beachside business game for 1 to 4 players</p>
+    <div class="card"><h3>Your name</h3>
+      <input type="text" id="owner" maxlength="14" autocomplete="given-name" placeholder="Jo Smith" enterkeyhint="next">
+      <div class="hint">Optional. Your initials show on the TV if you don't take a photo.</div></div>
     <div class="card"><h3>Name your bar</h3>
       <input type="text" id="name" maxlength="14" autocomplete="off" placeholder="The Red Parrot" enterkeyhint="go">
       <div class="hint">Up to 14 characters. You'll get the next free colour on the beach.</div></div>
     ${photoCardHTML()}`;
   foot.innerHTML = `<button class="btn" id="join">Join room ${esc(code)}</button>`;
-  const go = () => { conn.send({ type: 'join', name: $('name').value, token: joined?.token, photo: myPhoto.get() || undefined }); $('join').disabled = true; setTimeout(() => { const b = $('join'); if (b) b.disabled = false; }, 2500); };
+  try { $('owner').value = localStorage.getItem('cocktail-shack-owner') || ''; } catch (e) {}
+  $('owner').onkeydown = e => { if (e.key === 'Enter') $('name').focus(); };
+  const go = () => {
+    try { localStorage.setItem('cocktail-shack-owner', $('owner').value.trim()); } catch (e) {}
+    conn.send({ type: 'join', name: $('name').value, owner: $('owner').value, token: joined?.token, photo: myPhoto.get() || undefined }); $('join').disabled = true; setTimeout(() => { const b = $('join'); if (b) b.disabled = false; }, 2500); };
   $('join').onclick = go; $('name').onkeydown = e => { if (e.key === 'Enter') go(); };
   wirePhotoCard(false);
 };
@@ -244,7 +252,7 @@ BUILD.wait = () => {
   wirePhotoCard(true);
 };
 UPDATE.wait = () => {
-  $('w-list').innerHTML = S.lobby.map(p => `<div class="rival">${avatar(p.slot, p.colour)}
+  $('w-list').innerHTML = S.lobby.map(p => `<div class="rival">${avatar(p.slot, p.colour, p.initials)}
     <b>${LETTER[p.slot]}</b> ${esc(p.bar)} ${p.bot ? '<span class="hint" style="margin:0">computer</span>' : ''}${p.slot === S.me.slot ? '<span class="nw">you</span>' : ''}</div>`).join('');
   $('w-msg').textContent = S.isStarter ? 'Press Start when everyone is in.' : 'Waiting for the first player to press Start.';
   $('w-tv').innerHTML = tvBanner();
@@ -463,7 +471,7 @@ BUILD.final = () => {
       <p class="hint">net worth${f.debt ? ` (after ${money(f.debt)} still owed)` : ''}</p>
       <h3 style="justify-content:center;color:var(--ink);font-size:17px">${f.solo ? esc(f.title) : f.standings.filter(x => x.position === 1).length > 1 ? 'A tie at the top!' : `${esc(f.winner.bar)} takes the beach!`}</h3></div>
     <div class="card"><h3>🏁 Final standings</h3><div class="rivals">${f.standings.map(s => `<div class="rival"><b>${s.position}</b>
-      ${avatar(s.slot, s.colour)}${esc(s.bar)}${s.out ? ' <span class="hint" style="margin:0">OUT</span>' : ''}
+      ${avatar(s.slot, s.colour, s.initials)}${esc(s.bar)}${s.out ? ' <span class="hint" style="margin:0">OUT</span>' : ''}
       <span class="nw">${money(s.netWorth)}</span></div>`).join('')}</div></div>`;
   foot.innerHTML = `<button class="btn" id="again">Play again</button>`;
   $('again').onclick = () => { conn.cmd('playagain'); vibrate(20); };

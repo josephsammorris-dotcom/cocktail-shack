@@ -53,7 +53,10 @@ Changes from the handbook:
   with a speech bubble. They're for show: the sales and takings are unchanged.
 - **Selfies.** Players can take an optional photo when they join (or later in the waiting room). It appears on their
   bar's badge on the TV, in the lobby, the results table and the final podium. Photos travel in their own `photos`
-  message, so the frequent state updates stay small.
+  message, so the frequent state updates stay small. Without a photo, the same circle shows the player's initials
+  (from the optional "Your name" box, else the bar's name).
+- **Customers keep their cocktails.** Each customer walks in from a spot on the beach and, once served, strolls back
+  there with the drink in hand and stays, sipping, until the end of the day (or until seagulls or a storm clear the beach).
 - The four bar positions and the camera are pulled in a little so every bar fits a 16:9 TV, and room codes are claimed
   with a short `/api/new` call before the TV opens its socket.
 
