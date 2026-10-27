@@ -75,6 +75,7 @@ async function until(page, fn, timeout = 30000) {
     await sleep(3500);
     await tv.screenshot({ path: `${OUT}/tv-match-w${w}-a.png` });
     if (w === 1) await phones[0].screenshot({ path: `${OUT}/phone-match.png` });
+    await sleep(4000); if (w === 1) await phones[1].screenshot({ path: `${OUT}/phone-match-b.png` });
     await sleep(5000);
     await tv.screenshot({ path: `${OUT}/tv-match-w${w}-b.png` });
     // (slow software rendering can mean the results timer has already moved on to the next briefing)

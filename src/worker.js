@@ -12,6 +12,7 @@
  */
 import { DurableObject } from 'cloudflare:workers';
 import * as E from './engine.js';
+import { barQuotes } from './quotes.js';
 
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';            // A–Z without I and O
 const CODE_RE = /^[A-HJ-NP-Z]{4}$/;
@@ -311,6 +312,7 @@ export class Room extends DurableObject {
       case 'planning': {
         E.finalisePlans(g, p => this.online(p));
         const day = E.resolveDay(g);
+        this.addQuotes(g, day);
         this.r.startAt = now + MATCH_LEAD_MS;
         this.r.endsAt = this.r.startAt + day.script.durationMs + MATCH_TAIL_MS;
         this.r.log.push({ week: g.week, weather: g.weather, forecast: g.forecast, event: day.event,
@@ -398,6 +400,21 @@ export class Room extends DurableObject {
 
   revealed() { return ['matchday', 'results', 'finale'].includes(this.r.g.phase) && this.r.g.day; }
 
+  /** Customer comments for each phone's live feed (cosmetic), avoiding lines this bar heard recently. */
+  addQuotes(g, day) {
+    try {
+      const recent = this.r.recentQuotes ||= {};
+      const names = Object.fromEntries(g.players.map(p => [p.slot, p.bar]));
+      day.quotes = {};
+      for (const res of Object.values(day.results)) {
+        const sb = day.script.bars.find(b => b.slot === res.slot);
+        const qs = barQuotes(res, sb, { weather: g.weather, event: day.script.event, fixture: day.script.fixture, names }, Math.random, recent[res.slot] || []);
+        day.quotes[res.slot] = qs.map(({ atMs, mood, text }) => ({ atMs, mood, text }));
+        recent[res.slot] = [...(recent[res.slot] || []), ...qs.map(q => q.id)].slice(-40);
+      }
+    } catch (e) { day.quotes = {}; }
+  }
+
   tvView() {
     const r = this.r, g = r.g, day = g.day;
     const bars = g.players.map(p => ({ ...E.publicBar(g, p), connected: this.online(p), starter: r.starter === p.id }));
@@ -439,7 +456,8 @@ export class Room extends DurableObject {
       const res = day.results[p.slot];
       view.weather = g.weather; view.weatherLabel = E.WEATHER[g.weather].label;
       view.banner = day.banner; view.event = day.event;
-      view.sales = { mixed: res.mixed, saleTimesMs: day.script.bars.find(b => b.slot === p.slot)?.saleTimesMs || [], price: res.price, cashBefore: res.cashBefore, spent: res.spent.total };
+      view.sales = { mixed: res.mixed, saleTimesMs: day.script.bars.find(b => b.slot === p.slot)?.saleTimesMs || [], price: res.price, cashBefore: res.cashBefore, spent: res.spent.total,
+        quotes: day.quotes?.[p.slot] || [] };
       if (g.phase !== 'matchday') view.report = res;
     } else if (this.revealed()) {
       view.weather = g.weather; view.weatherLabel = E.WEATHER[g.weather].label; view.banner = day.banner; view.event = day.event;

@@ -1,4 +1,5 @@
 // Golden test cases for the rules engine (Handbook Section 17). Run: node tests/engine.test.js
+import { barQuotes } from '../src/quotes.js';
 import * as E from '../src/engine.js';
 
 let pass = 0, fail = 0;
@@ -283,6 +284,27 @@ t('25 forecast record fills in as each day ends', () => {
   ok(r.length === 1 && r[0].week === 1 && r[0].forecast === g.forecast && r[0].weather === g.weather, 'shown at results');
   E.endWeek(g);
   ok(E.forecastRecord(g).length === 1, 'kept into the next briefing');
+});
+
+t('26 customer comments match the day', () => {
+  let n = 0;
+  for (let seed = 1; seed < 60; seed++) {
+    const g = E.createGame(seed, { weeks: 8 });
+    for (let i = 0; i < 2; i++) E.addPlayer(g, { id: 'b' + i, token: 't' + i, name: '', bot: true });
+    E.startGame(g);
+    E.beginPlanning(g); E.finalisePlans(g);
+    const day = E.resolveDay(g);
+    for (const res of Object.values(day.results)) {
+      const sb = day.script.bars.find(b => b.slot === res.slot);
+      const qs = barQuotes(res, sb, { weather: g.weather, event: day.script.event, fixture: day.script.fixture, names: { 0: 'A', 1: 'B' } }, E.makeRng(seed));
+      ok(qs.length > 0, 'some comments');
+      ok(qs.every(q => q.atMs >= 0 && q.atMs <= day.script.durationMs && !/[{}]/.test(q.text)), 'in the day, tokens filled');
+      ok(qs.every((q, i) => !i || q.atMs >= qs[i - 1].atMs), 'in time order');
+      if (res.verdicts?.mix[1].startsWith('sold out')) { ok(qs.some(q => q.id.startsWith('soldout')), 'a sell-out gets a complaint'); n++; }
+      if (res.verdicts?.price[1].includes('far too dear')) ok(qs.some(q => q.id.startsWith('price_dear') || q.id.startsWith('wa_')), 'too dear gets a complaint');
+    }
+  }
+  ok(n > 0, 'saw a sell-out');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

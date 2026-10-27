@@ -395,7 +395,9 @@ BUILD.match = () => {
   main.innerHTML = `<div class="card center wide"><div style="font-size:44px">📺</div><h2 style="margin:4px 0">Look at the TV</h2>
       <p class="hint" id="m-wx"></p></div>
     <div class="card center"><h3 style="justify-content:center">Served</h3><div class="big-n" id="m-n">0</div><div class="hint" id="m-cash"></div></div>
+    <div class="card feed"><h3>💬 What customers are saying</h3><div id="m-feed"><p class="hint" id="m-quiet">Customers are on their way…</p></div></div>
     <div id="m-ev"></div>`;
+  lastQuote = 0;
   foot.innerHTML = '';
   cancelAnimationFrame(matchRAF);
   const loop = () => { if (screen !== 'match') return; drawMatch(); matchRAF = requestAnimationFrame(loop); };
@@ -408,7 +410,18 @@ function drawMatch() {
   if (served > lastServed) { if (served - lastServed < 4) vibrate(12); lastServed = served; }
   $('m-n').innerHTML = `${served}<small> / ${s.mixed}</small>`;
   $('m-cash').textContent = `Cash ${money(s.cashBefore - s.spent + served * s.price)}${served && served === s.mixed ? ' · Sold out!' : ''}`;
+  // customer comments arrive as the day plays; newest at the top, the last four kept
+  const qs = (s.quotes || []).filter(q => q.atMs <= t);
+  if (qs.length !== lastQuote) {
+    const fresh = qs.length > lastQuote;
+    lastQuote = qs.length;
+    $('m-feed').innerHTML = qs.length ? qs.slice(-4).reverse().map((q, i) => `<div class="quote ${q.mood}${i === 0 && fresh ? ' new' : ''}"><span class="qf">${MOOD_FACE[q.mood] || '🙂'}</span><span>${esc(q.text)}</span></div>`).join('')
+      : `<p class="hint">Customers are on their way…</p>`;
+    if (fresh && qs.at(-1)?.mood === 'angry') vibrate([20, 40, 20]);
+  }
 }
+const MOOD_FACE = { happy: '😄', funny: '😂', angry: '😡', sad: '😢', serious: '🧐' };
+let lastQuote = 0;
 UPDATE.match = () => {
   $('m-wx').textContent = S.weatherLabel ? `Serving cocktails. Actual weather: ${S.weatherLabel.toLowerCase()}.` : '';
   $('m-ev').innerHTML = S.banner && S.event !== 'storm' ? `<div class="banner amber">${esc(S.banner)}</div>` : S.event === 'storm' ? `<div class="banner red">${esc(S.banner)}</div>` : '';

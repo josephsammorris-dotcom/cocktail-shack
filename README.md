@@ -71,6 +71,12 @@ Changes from the handbook:
 - **Forecast record.** Once each day is over, a small card in the bottom-right corner of the TV shows every week so far:
   what the forecast said, what the weather was, and a tick or cross. During the briefing the weather card shows the
   same record as a row of ticks and crosses. (The room keeps a `wxLog`; `forecastRecord()` only shows a day after it ends.)
+- **Customers have their say, live.** During the day each phone shows a feed of customer comments under the sales
+  count: happy, funny, angry, sad or matter-of-fact, about the price, running out, adverts, staff, the weather, the
+  match and the day's surprises. They're written from the settled results (`src/quotes.js`, the same verdicts as the
+  report and the day's walk-aways), so they always match what happened, and a bar doesn't hear the same line again for a while.
+- **A cleared beach stays cleared.** After seagulls or a storm empty the beach, nobody comes back during the results;
+  everyone returns when the next day begins.
 - **How to play.** A **?** button in the phone's header (and a *How to play* button in the waiting room) opens the rules
   and the game's mechanics: costs, staff, weather, fixtures, price, adverts, surprises and loans.
 - **Customers keep their cocktails.** Each customer walks in from a spot on the beach and, once served, strolls back

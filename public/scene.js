@@ -1086,6 +1086,7 @@ export class Beach {
   /** How many of each kind of beachgoer, and how full the stands are, for this weather and fixture. */
   /** A storm or a seagull raid empties the beach for the rest of the day. */
   fleeing() {
+    if (this.cleared) return true;                 // the beach stays empty after the day, until the next one starts
     const d = this.day; if (!d) return false;
     if (this.weatherType === 'storm') return true;
     const ev = d.script.event;
@@ -1110,6 +1111,7 @@ export class Beach {
   // ---------------------------------------------------------------- the day
   /** Start playing the day script. now() returns server time; startAt is when the script's t = 0. */
   playDay(script, startAt, now, hooks = {}) {
+    this.newDay();
     this.day = { script, startAt, now, hooks, served: {}, chimes: [], chimeIdx: 0, eventFired: false, spawned: new Set() };
     this.fleeStart = null;
     const total = script.bars.reduce((s, b) => s + b.saleTimesMs.length, 0);
@@ -1126,13 +1128,22 @@ export class Beach {
   }
   stopDay() {
     this.stopParty();
-    if (this.scattered) this.restoreLife();
+    // gulls or a storm cleared the beach: it stays empty through the results, until a new day begins
+    if (this.day && this.fleeing()) this.cleared = true;
+    else if (this.scattered && !this.cleared) this.restoreLife();
     for (const w of this.walkAways || []) this.scene.remove(w.f);
     this.walkAways = [];
     for (const bar of this.bars) if (bar) { for (const f of bar.leavers) this.scene.remove(f); bar.leavers = []; }
     this.day = null; this.vb.endMatch(); this.van.visible = false; this.gulls.forEach(g => g.visible = false);
     for (const f of this.defectors) this.scene.remove(f);
     this.defectors = [];
+  }
+  /** A new day: anyone who ran from gulls or a storm comes back to the beach. */
+  newDay() {
+    if (!this.cleared && !this.scattered) return;
+    this.cleared = false;
+    if (this.scattered) this.restoreLife();
+    for (const f of this.spectators) { f.userData.fled = false; f.userData.fleeTo = null; }
   }
   hidePrices() { this.bars.forEach(b => b && (b.price.visible = false)); }
 

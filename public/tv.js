@@ -240,11 +240,11 @@ function enterPhase() {
 
   switch (ph) {
     case 'lobby':
-      beach.setWeather('sunny'); beach.setFixture(null); beach.hidePrices();
+      beach.newDay(); beach.setWeather('sunny'); beach.setFixture(null); beach.hidePrices();
       caption('');
       break;
     case 'briefing':
-      beach.setWeather(S.forecast); beach.setFixture(S.fixture); beach.hidePrices();
+      beach.newDay(); beach.setWeather(S.forecast); beach.setFixture(S.fixture); beach.hidePrices();
       if (S.week === 1) sound.riff(); else sound.riff(7);
       renderBriefing();
       caption(`Week ${S.week}: ${S.fixture.match ? `${S.fixture.big || 'Beach Volleyball'}, Home v ${S.fixture.away}` : 'no match today, just a day on the beach'}. The Beach Weather says ${S.forecastLabel.toLowerCase()}.${S.fixture.big ? ' Big Match week! Expect a bigger crowd.' : ''}`);

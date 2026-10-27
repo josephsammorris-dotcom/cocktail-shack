@@ -124,6 +124,14 @@ header .chip+.help{margin-left:auto}
 #howto table{width:100%;border-collapse:collapse;font-size:14px}
 #howto td{padding:5px 0;border-bottom:1px solid #f4ecdc}
 #howto td:last-child{text-align:right;font-weight:700}
+.feed #m-feed{display:flex;flex-direction:column;gap:8px;min-height:120px}
+.quote{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:14px;background:#f6f9fa;font-weight:600;font-size:15px;line-height:1.3;border-left:5px solid #cbd5e1}
+.quote .qf{font-size:22px;line-height:1;flex:none}
+.quote.happy{background:#ecfdf3;border-color:var(--good)} .quote.funny{background:#fff7e0;border-color:var(--amber)}
+.quote.angry{background:#fde8e8;border-color:var(--bad)} .quote.sad{background:#eef2ff;border-color:#6366f1} .quote.serious{background:#f1f5f9;border-color:#64748b}
+.quote:nth-child(n+2){opacity:.75} .quote:nth-child(n+3){opacity:.5} .quote:nth-child(n+4){opacity:.3}
+.quote.new{animation:qin .35s ease-out}
+@keyframes qin{from{transform:translateY(-10px);opacity:0}}
 .hide{display:none!important}
 @media (orientation:landscape) and (min-width:640px){
   main{display:grid;grid-template-columns:1fr 1fr;align-content:start}
