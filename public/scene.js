@@ -2,8 +2,34 @@
 import * as THREE from 'three';
 import { Volleyball, COURT } from '/volleyball.js';
 import { mergeGeometries } from '/vendor/BufferGeometryUtils.js';
+import { EffectComposer } from '/vendor/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from '/vendor/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '/vendor/jsm/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from '/vendor/jsm/postprocessing/ShaderPass.js';
+import { CopyShader } from '/vendor/jsm/shaders/CopyShader.js';
 
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Fog, the same with or without bloom. Drawing straight to the canvas, three.js mixes the fog in *after* converting
+// to screen colours, and the beach's horizon haze was tuned that way. Drawing into the bloom composer's buffers the
+// colours (and the fog colour) are still linear at that point, which made the haze paler. So when the output is
+// linear, convert both to screen colours, mix exactly as on screen, and convert back: the far sea looks the same.
+THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
+  #ifdef FOG_EXP2
+    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+  #else
+    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+  #endif
+  if ( abs( linearToOutputTexel( vec4( 0.5 ) ).r - 0.5 ) < 0.001 ) {
+    vec3 c = max( gl_FragColor.rgb, 0.0 );
+    vec3 s = mix( c * 12.92, 1.055 * pow( c, vec3( 1.0 / 2.4 ) ) - 0.055, step( 0.0031308, c ) );
+    vec3 f = mix( fogColor * 12.92, 1.055 * pow( fogColor, vec3( 1.0 / 2.4 ) ) - 0.055, step( 0.0031308, fogColor ) );
+    s = mix( s, f, fogFactor );
+    gl_FragColor.rgb = mix( s / 12.92, pow( ( s + 0.055 ) / 1.055, vec3( 2.4 ) ), step( 0.04045, s ) );
+  } else {
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+  }
+#endif`;
 // the prototype used (±48, 28) and (±48, −26); pulled in a little so every bar fits a 16:9 TV with the camera below
 export const BAR_POS = [[-41, 21], [41, 21], [-45, -22], [45, -22]];
 const PATTERNS = ['stripes', 'dots', 'zigzag', 'checks'];
@@ -271,6 +297,119 @@ export function figure({ shirt = '#ffffff', shorts = '#123c4a', skin, hair, eyes
   g.userData = { body, head, legs, torso, arms: armPivots, phase: rnd() * 10, baseScale: scale, armX: [0, 0], armZ: [0, 0], setShirt: c => { body.material = toon(c); } };
   return g;
 }
+// Linear → screen (sRGB) colours, the way drawing straight to the canvas does it. The canvas is see-through (the
+// sky is CSS behind it), so its colours are premultiplied by alpha: un-premultiply, convert, re-premultiply, or
+// half-transparent clouds and the sun's halo come out washed-out.
+const TO_SCREEN_COLOURS = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: CopyShader.vertexShader,
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    vec3 enc( vec3 c ) { c = max( c, 0.0 ); return mix( c * 12.92, 1.055 * pow( c, vec3( 1.0 / 2.4 ) ) - 0.055, step( 0.0031308, c ) ); }
+    void main() {
+      vec4 t = texture2D( tDiffuse, vUv );
+      gl_FragColor = t.a > 0.0 ? vec4( enc( t.rgb / t.a ) * t.a, t.a ) : vec4( 0.0 );
+    }`,
+};
+
+// ------------------------------------------------------------------ instanced crowds
+// The stands and the party dancers are lots of identical simple figures. Each one still exists as an ordinary
+// figure() group, so all the walking, cheering and fleeing code works unchanged, but its meshes are hidden and
+// every frame their positions are copied into two InstancedMeshes (bodies and arms). That turns three draw calls
+// per person into two draw calls for the whole crowd. Each body's colours (shirt, shorts, skin, hair) are
+// per-instance attributes, so swapping a shirt for a jumper is a write to one attribute, not a new geometry.
+const PART = { shorts: 0, shirt: 1, skin: 2, hair: 3, eye: 4 };
+// the same double sRGB→linear step bakeColour() does, so instanced people match the merged ones exactly
+const bakedLinear = hex => new THREE.Color(hex).convertSRGBToLinear();
+let crowdBodyGeo = null;
+function getCrowdBodyGeo() {
+  if (crowdBodyGeo) return crowdBodyGeo;
+  const M = (x, y, z, rx = 0) => new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, 0, 0)), new THREE.Vector3(1, 1, 1));
+  const tag = (geo, part, matrix) => {
+    const g = geo.toNonIndexed(); g.applyMatrix4(matrix);
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    g.setAttribute('part', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count).fill(part), 1));
+    return g;
+  };
+  crowdBodyGeo = mergeGeometries([tag(G.leg, PART.shorts, M(-0.42, 0.75, 0)), tag(G.leg, PART.shorts, M(0.42, 0.75, 0)),
+    tag(G.body, PART.shirt, M(0, 2.25, 0)), tag(G.head, PART.skin, M(0, 4.15, 0)), tag(G.hair, PART.hair, M(0, 4.2, 0, -0.25)),
+    tag(G.eye, PART.eye, M(-0.36, 4.25, 0.9)), tag(G.eye, PART.eye, M(0.36, 4.25, 0.9))]);
+  return crowdBodyGeo;
+}
+let crowdBodyMat = null;
+function getCrowdBodyMat() {
+  if (crowdBodyMat) return crowdBodyMat;
+  const m = crowdBodyMat = new THREE.MeshToonMaterial({ color: '#ffffff', gradientMap, vertexColors: true });
+  const eye = bakedLinear('#1b2430'), v = c => `vec3(${c.r.toFixed(5)}, ${c.g.toFixed(5)}, ${c.b.toFixed(5)})`;
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float part;\nattribute vec3 iShirt;\nattribute vec3 iShorts;\nattribute vec3 iSkin;\nattribute vec3 iHair;\nattribute float iEyes;')
+      .replace('#include <color_vertex>', `vColor = part < 0.5 ? iShorts : part < 1.5 ? iShirt : part < 2.5 ? iSkin : part < 3.5 ? iHair : ${v(eye)};`)
+      // people without eyes: tuck the eye spheres away inside the head
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nif (part > 3.5 && iEyes < 0.5) transformed = vec3(0.0, 4.15, 0.0);');
+  };
+  m.customProgramCacheKey = () => 'crowd-body';
+  return m;
+}
+const ZERO_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
+class Crowd {
+  /** n: how many people this crowd can hold */
+  constructor(scene, n, { castShadow = true } = {}) {
+    this.figures = [];
+    // the body geometry is cloned so each crowd carries its own instance colours
+    this.body = new THREE.InstancedMesh(getCrowdBodyGeo().clone(), getCrowdBodyMat(), n);
+    this.arms = new THREE.InstancedMesh(G.arm, new THREE.MeshToonMaterial({ color: '#ffffff', gradientMap }), n * 2);
+    for (const im of [this.body, this.arms]) {
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.frustumCulled = false;                      // people wander off (fleeing a storm), so skip culling
+      for (let i = 0; i < im.count; i++) im.setMatrixAt(i, ZERO_MATRIX);
+      scene.add(im);
+    }
+    this.body.castShadow = castShadow;
+    const attr = () => new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+    this.cols = { iShirt: attr(), iShorts: attr(), iSkin: attr(), iHair: attr() };
+    for (const [k, a] of Object.entries(this.cols)) this.body.geometry.setAttribute(k, a);
+    this.eyes = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+    this.body.geometry.setAttribute('iEyes', this.eyes);
+  }
+  setColour(key, i, hex) { const c = bakedLinear(hex), a = this.cols[key]; a.setXYZ(i, c.r, c.g, c.b); a.needsUpdate = true; }
+  /** Make a figure() and draw it through the crowd: its own meshes are hidden, its colours become instance data.
+   *  Takes the same options as figure(); skin and hair are picked here, in the order figure() would pick them. */
+  person(opts) {
+    const rnd = opts.rnd || Math.random;
+    const look = { shorts: '#123c4a', eyes: true, ...opts };
+    look.skin ||= SKINS[Math.floor(rnd() * SKINS.length)];
+    look.hair ||= HAIRS[Math.floor(rnd() * HAIRS.length)];
+    const f = figure(look), i = this.figures.length; this.figures.push(f);
+    this.setColour('iShirt', i, look.shirt); this.setColour('iShorts', i, look.shorts);
+    this.setColour('iSkin', i, look.skin); this.setColour('iHair', i, look.hair);
+    this.eyes.setX(i, look.eyes ? 1 : 0); this.eyes.needsUpdate = true;
+    const sk = new THREE.Color(look.skin); this.arms.setColorAt(i * 2, sk); this.arms.setColorAt(i * 2 + 1, sk);
+    this.arms.instanceColor.needsUpdate = true;
+    const u = f.userData;
+    u.body.visible = false;
+    u.armMeshes = u.arms.map(p => { const m = p.children[0]; m.visible = false; return m; });
+    u.setShirt = c => this.setColour('iShirt', i, c);
+    return f;
+  }
+  /** Copy every figure's pose into the instances. Call once a frame, after the figures have been animated. */
+  sync() {
+    let last = -1;
+    this.figures.forEach((f, i) => {
+      if (!f.visible) { this.body.setMatrixAt(i, ZERO_MATRIX); this.arms.setMatrixAt(i * 2, ZERO_MATRIX); this.arms.setMatrixAt(i * 2 + 1, ZERO_MATRIX); return; }
+      last = i;
+      f.updateMatrixWorld(true);
+      const u = f.userData;
+      this.body.setMatrixAt(i, u.body.matrixWorld);
+      this.arms.setMatrixAt(i * 2, u.armMeshes[0].matrixWorld);
+      this.arms.setMatrixAt(i * 2 + 1, u.armMeshes[1].matrixWorld);
+    });
+    // only draw up to the last person showing (the stands fill front rows first, so empty seats are mostly at the end)
+    this.body.count = last + 1; this.arms.count = (last + 1) * 2;
+    this.body.visible = this.arms.visible = last >= 0;
+    this.body.instanceMatrix.needsUpdate = true; this.arms.instanceMatrix.needsUpdate = true;
+  }
+}
+
 /** Walk, bounce and cheer. Arms follow unless `arms: false` (the volleyball module poses its own). */
 export function animateFigure(f, t, { walk = 0, bounce = 0.06, cheer = 0, arms = true, dt = 0.016 } = {}) {
   const u = f.userData, p = t * (walk ? 9 : 2.2) + u.phase;
@@ -322,13 +461,37 @@ export class Beach {
     this.look = { ...LOOKS.sunny }; this.lookTarget = LOOKS.sunny; this.weatherType = 'sunny';
     this.fixture = null; this.day = null; this.defectors = [];
     this.build();
+    this.setupPost();
     this.resize();
     addEventListener('resize', () => this.resize());
+  }
+
+  // ---------------------------------------------------------------- post-processing
+  // A soft bloom on the brightest things: the sun's halo, the glitter on the sea, white-hot highlights and the
+  // party's bulbs, beams and neon. Ordinary sand and parasols stay under the threshold, so the beach doesn't go
+  // hazy. The scene is drawn into a 4× multisampled buffer (edges stay as smooth as the renderer's own
+  // anti-aliasing), converted to screen colours exactly as drawing straight to the canvas would (so the clouds,
+  // the sun and the see-through sky look just as they did), then the glow is added on top. Bloom is the first
+  // thing the quality tiers drop on a slow machine.
+  setupPost() {
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+    const c = this.composer = new EffectComposer(this.renderer, target);
+    c.addPass(new RenderPass(this.scene, this.camera));
+    c.addPass(new ShaderPass(TO_SCREEN_COLOURS));
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.4, 0.5, 0.9);
+    // the stock bloom also adds to the alpha channel, which would paint the see-through sky black: add the glow's
+    // colour only and leave alpha alone, so over the sky it brightens the CSS gradient behind the canvas
+    Object.assign(this.bloom.blendMaterial, { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendEquationAlpha: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor });
+    c.addPass(this.bloom);
+    c.addPass(new ShaderPass(CopyShader));          // to the canvas, as is
+    this.postOn = true;
   }
 
   resize() {
     const w = innerWidth, h = innerHeight;
     this.renderer.setSize(w, h, false);
+    if (this.composer) { this.composer.setPixelRatio(this.renderer.getPixelRatio()); this.composer.setSize(w, h); }
     this.camera.aspect = w / h;
     // keep the whole beach in frame on narrow screens
     this.camera.fov = w / h < 1.7 ? 50 * (1.78 / (w / h)) ** 0.6 : 50;
@@ -624,9 +787,11 @@ export class Beach {
     const hx = COURT.hx, hz = COURT.hz;
     for (let row = 0; row < 4; row++) for (let i = 0; i < 12; i++) spots.push([-hx + 1.5 + i * ((hx * 2 - 3) / 11) + (row % 2) * 1.2, -hz - 3 - row * 2.3, row]);
     for (const s of [-1, 1]) for (let row = 0; row < 2; row++) for (let i = 0; i < 6; i++) spots.push([s * (hx + 4 + row * 2.4), -hz + 1.5 + i * ((hz * 2 - 3) / 5), row + 0.2]);
+    // drawn as one instanced crowd (see Crowd): two draw calls for the whole stand instead of three per person
+    const crowd = this.standsCrowd = new Crowd(this.scene, spots.length);
     spots.forEach(([x, z, row], i) => {
       const shirt = SHIRTS[i % SHIRTS.length];
-      const f = figure({ shirt, shorts: ['#123c4a', '#1e3a8a', '#7c2d12', '#334155'][i % 4], eyes: i % 4 === 0, scale: 0.85, rnd: r });
+      const f = crowd.person({ shirt, shorts: ['#123c4a', '#1e3a8a', '#7c2d12', '#334155'][i % 4], eyes: i % 4 === 0, scale: 0.85, rnd: r });
       f.position.set(x, 0, z); f.lookAt(0, 0, 0);
       f.userData.home = new THREE.Vector3(x, 0, z); f.userData.shirt = shirt; f.userData.jumper = JUMPERS[i % JUMPERS.length];
       // nearest rows fill first, with a little randomness so the stands fill unevenly
@@ -735,10 +900,11 @@ export class Beach {
     // the dancers: bright party clothes, waiting off stage
     const shirts = ['#f472b6', '#22d3ee', '#a3e635', '#facc15', '#fb923c', '#a78bfa', '#ffffff', '#f87171'];
     this.dancers = [];
+    const crowd = this.danceCrowd = new Crowd(this.scene, 44);
     for (let i = 0; i < 44; i++) {
       const row = Math.floor(i / 11), col = i % 11;
       const spot = new THREE.Vector3(-16 + col * 3.2 + (row % 2) * 1.6 + (Math.random() - 0.5), 0, -5 + row * 3.3 + (Math.random() - 0.5));
-      const f = figure({ shirt: shirts[i % shirts.length], shorts: ['#1e3a8a', '#111827', '#7c2d12'][i % 3], scale: 0.85, eyes: false });
+      const f = crowd.person({ shirt: shirts[i % shirts.length], shorts: ['#1e3a8a', '#111827', '#7c2d12'][i % 3], scale: 0.85, eyes: false });
       const a = Math.random() * Math.PI * 2;
       f.userData.spot = spot; f.userData.from = spot.clone().add(new THREE.Vector3(Math.cos(a) * 30, 0, Math.abs(Math.sin(a)) * 25));
       f.userData.style = i % 4; f.userData.arrive = Math.random() * 2.5;
@@ -763,7 +929,7 @@ export class Beach {
     this.party.scale.setScalar(Math.min(1.35, 0.01 + T * 3));          // a bit bigger than life, so it reads on the TV
     this.decks.forEach((d, i) => (d.rotation.y += dt * (i ? 5 : 4)));
     this.speakers.forEach(sp => sp.scale.set(1 + kick * 0.06, 1 + kick * 0.06, 1 + kick * 0.06));
-    this.bulbs.forEach((b, i) => { const on = (Math.floor(beat * 2) + i) % 3 !== 0; b.material.color.copy(b.userData.col).multiplyScalar(on ? 1.2 : 0.25); });
+    this.bulbs.forEach((b, i) => { const on = (Math.floor(beat * 2) + i) % 3 !== 0; b.material.color.copy(b.userData.col).multiplyScalar(on ? (this.postOn ? 2.4 : 1.2) : 0.25); });   // brighter with bloom, so lit bulbs glow
     this.beams.forEach((m, i) => { m.rotation.z = Math.sin(T * 1.3 + i * 1.7) * 0.7; m.rotation.x = Math.cos(T * 1.1 + i) * 0.35; m.material.opacity = 0.1 + kick * 0.12; });
     // the DJ: nodding along, one hand on the headphones, the other in the air on the drop
     animateFigure(this.dj, t, { bounce: 0.18 + kick * 0.25, arms: false, dt });
@@ -1263,7 +1429,10 @@ export class Beach {
     this.camera.position.set(cb.x + Math.sin(t * 0.21) * drift + this.camNudge.x * 0.4, cb.y + Math.sin(t * 0.17) * drift * 0.5, cb.z + Math.cos(t * 0.13) * drift + this.camNudge.z * 0.3);
     this.camera.lookAt(lb.x + this.camNudge.x, lb.y, lb.z + this.camNudge.z);
 
-    this.renderer.render(this.scene, this.camera);
+    // the stands and the dancers are drawn as instanced crowds: copy this frame's poses across
+    this.standsCrowd.sync(); this.danceCrowd.sync();
+    if (this.postOn) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
   }
 
   /** Beachgoers and spectators come and go with the weather and the fixture; each pops in or out. */
@@ -1498,7 +1667,7 @@ export class Beach {
   }
 
   qualityCheck(dt) {
-    // quality tiers: drop resolution, then shadows, if the frame rate sags (measured over the last two seconds)
+    // quality tiers: drop bloom, then resolution, then shadows, if the frame rate sags (measured over the last two seconds)
     this.frames.push(dt);
     let sum = this.frames.reduce((a, b) => a + b, 0);
     while (sum > 2 && this.frames.length > 1) sum -= this.frames.shift();
@@ -1509,10 +1678,11 @@ export class Beach {
     else this.lowSince = 0;
   }
   lowerQuality() {
-    if (this.tierLevel >= 3) return;
+    if (this.tierLevel >= 4) return;
     this.tierLevel++;
-    if (this.tierLevel === 1) { this.renderer.setPixelRatio(1); this.resize(); }
-    if (this.tierLevel === 2) { this.renderer.shadowMap.enabled = false; this.scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }
-    if (this.tierLevel === 3) { this.renderer.setPixelRatio(0.75); this.resize(); this.rain.geometry.setDrawRange(0, 1200); }
+    if (this.tierLevel === 1) { this.postOn = false; }                       // straight to screen, no bloom
+    if (this.tierLevel === 2) { this.renderer.setPixelRatio(1); this.resize(); }
+    if (this.tierLevel === 3) { this.renderer.shadowMap.enabled = false; this.scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }
+    if (this.tierLevel === 4) { this.renderer.setPixelRatio(0.75); this.resize(); this.rain.geometry.setDrawRange(0, 1200); }
   }
 }

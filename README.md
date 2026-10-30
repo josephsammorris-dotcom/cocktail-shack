@@ -96,7 +96,7 @@ node tests/server.mjs 3 8 # a whole 8-week game over WebSockets against the dev 
 node tests/e2e.cjs 2      # TV + three phones in real browsers, with screenshots (needs Playwright)
 ```
 
-`npm run build` copies three.js and the QR library into `public/vendor/` (they're committed, so deploys need no build).
+`npm run build` copies three.js (plus the bloom post-processing modules, under `public/vendor/jsm/`) and the QR library into `public/vendor/` (they're committed, so deploys need no build).
 
 ## Hosting on Cloudflare
 
